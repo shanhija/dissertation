@@ -1,6 +1,6 @@
 /**
- * Fetches the voice the server speaks taunts in: Kokoro-82M as ONNX, its tokenizer and the 13 of its
- * voices the doctors are made of, from a pinned revision on Hugging Face into node_modules/.cache/voice (about 330 MB). It runs
+ * Fetches the voice the server speaks taunts in: Kokoro-82M as ONNX, its tokenizer and 27 of its 28
+ * English voices (all but Adam), from a pinned revision on Hugging Face into node_modules/.cache/voice (about 340 MB). It runs
  * after `npm install` and with `npm run voice`. sources.json names each file with its SHA-256; a file
  * already there is checked against it and kept. The stamp (.fetched, a hash of sources.json and this
  * script) skips the checking while nothing has changed. Anything that goes wrong stops with what it was doing.

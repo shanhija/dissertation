@@ -29,7 +29,7 @@ cd dissertation
 npm install
 ```
 
-`npm install` also downloads the CC0 sound packs (about 284 MB) and builds `sounds/` from them, and fetches the voice, Kokoro-82M (about 330 MB), into `node_modules/.cache/voice`. If either download fails, run `npm run sounds` or `npm run voice` later.
+`npm install` also downloads the CC0 sound packs (about 284 MB) and builds `sounds/` from them, and fetches the voice, Kokoro-82M (about 340 MB), into `node_modules/.cache/voice`. If either download fails, run `npm run sounds` or `npm run voice` later.
 
 If Claude Code is not signed in yet, run `claude` once and log in.
 
@@ -81,7 +81,7 @@ The brief is [`design.md`](design.md); the decisions and what is still open are 
 | E, Q, F | Pick up a thing or open a ready crate (into the left hand if it is empty, else the right; with both full the left hand's drops); throw what is in the left hand, or in the right (a thrown thing hits for 6). |
 | T (or Enter), write, Enter | You stop and write while everyone else goes on. A crate comes in near you with your name on it, first a blue drawing in light that turns solid from the bottom up, always on floor you can walk to (indoors too); it opens when Opus is done, within 30 s (else it holds a thing from the archive). Then 15 s before the next. |
 | R | A thing nobody has ever had. |
-| V | A taunt in your doctor's own voice, heard by everyone within 30 m from where you stand (louder nearer, following you as you go) and shown on screen as a subtitle. The host's computer says it, so every browser hears the same thing. Each doctor is a pompous old man with a voice of his own (the same every game for the same browser) and says each taunt in a tone: plain, booming, indignant, gloating, hushed or sniffy, most often the one he is given to. |
+| V | A taunt in your doctor's own voice, heard by everyone within 30 m from where you stand (louder nearer, following you as you go) and shown on screen as a subtitle. The host's computer says it, so every browser hears the same thing. Each doctor is an old British orator, a man or a woman, with a voice of their own (the same every game for the same browser), the melody swooping high and low, and says each taunt in a tone: plain, booming, indignant, gloating, hushed or sniffy, most often the one they are given to. |
 | Tab | The scores. |
 | Arrow keys | Turn and look, for a touchpad. |
 | O, or Options (the pause card after Esc, the dressing room's top right) | The options screen, at any time (O or Esc closes it). Its second tab, Lighting and look, sits at the side with the picture clear behind it (click into the picture to walk about, Esc to come back): exposure, ambient, reflections, the sun's strength, height, direction and warmth, the arena's lamps and their reach, light from effects, glow, ambient occlusion and bloom strength, and the book's light bands, hatching and its size, dust, paper grain, matte, rim light, colour, warmth, contrast, dark corners and the page; "Copy values" gives them to make the game's own. Controls: mouse sensitivity, invert mouse, field of view. Display: fullscreen or windowed, the resolution drawn (a share of the screen's own pixels), sharpening, a frame counter. Graphics: a preset (high, medium, low) or shadows (fine, soft, off), antialiasing (off, FXAA, SMAA, MSAA 2×, 4× or 8×), ambient occlusion, bloom, light from effects and dust one by one. Sound: volume, spoken taunts. Every change takes at once and is kept in the browser. |

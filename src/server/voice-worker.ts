@@ -3,11 +3,12 @@
  * whole of a line (about 2 s for a long taunt on 4 cores), so it runs here and not beside the
  * physics. Node loads this file itself, without Vite, so it imports packages and types only.
  *
- * A line is read as phonemes by espeak-ng in the accent asked, the punctuation kept between the
- * words as Kokoro wants it. A Kokoro voice is 510 rows of 256 numbers, one row per length of line:
+ * A line is read as English phonemes by espeak-ng, the punctuation kept between the words as
+ * Kokoro wants it. A Kokoro voice is 510 rows of 256 numbers, one row per length of line:
  * the first 128 are the timbre (who is speaking), the last 128 the prosody (pitch, pace and
  * intonation; measured 2026-11-10, Bella's prosody on George's timbre speaks at Bella's pitch). Each
- * half is mixed from the voices asked, the line spoken, aged (played back slower and trembling),
+ * half is mixed from the voices asked, the line spoken, its melody widened, aged (played back
+ * slower and trembling),
  * levelled like the game's recorded cries (its loudest 200 ms at -16 dBFS, peaks under -1 dBFS,
  * then the tone's own level) and encoded as mono MP3.
  */
@@ -46,16 +47,16 @@ function voice(name: string): Float32Array {
 /** Kokoro's punctuation, kept as it is between the phonemized runs of words. */
 const PUNCTUATION = /(\s*[;:,.!?¡¿—…"«»“”(){}[\]]+\s*)+/g
 
-async function phonemes(text: string, accent: Render['accent']): Promise<string> {
+async function phonemes(text: string): Promise<string> {
   const plain = text.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, ' ').trim()
   const parts: string[] = []
   let last = 0
   for (const m of plain.matchAll(PUNCTUATION)) {
-    if (m.index > last) parts.push((await phonemize(plain.slice(last, m.index), accent)).join(' '))
+    if (m.index > last) parts.push((await phonemize(plain.slice(last, m.index), 'en')).join(' '))
     parts.push(m[0])
     last = m.index + m[0].length
   }
-  if (last < plain.length) parts.push((await phonemize(plain.slice(last), accent)).join(' '))
+  if (last < plain.length) parts.push((await phonemize(plain.slice(last), 'en')).join(' '))
   return parts.join('').replace(/ʲ/g, 'j').replace(/r/g, 'ɹ').replace(/x/g, 'k').replace(/ɬ/g, 'l').trim()
 }
 
@@ -74,6 +75,139 @@ function style(r: Render, row: number): Float32Array {
   }
   return out
 }
+
+// ------------------------------------------------------------------------------ the melody
+
+/** Pitch frames: every 10 ms, 40 ms long, on a half-rate copy, between 55 and 500 Hz. */
+const HOP = 240
+const WINDOW = 480
+const LAGS = [Math.floor(RATE / 2 / 500), Math.ceil(RATE / 2 / 55)] as const
+
+/** The pitch of each frame (Hz, 0 where it is not voiced); frame f is centred on sample f * HOP + WINDOW. */
+function pitch(x: Float32Array): Float32Array {
+  const half = new Float32Array(x.length >> 1)
+  for (let i = 0; i < half.length; i++) half[i] = (x[2 * i]! + x[2 * i + 1]!) / 2
+  const [minLag, maxLag] = LAGS
+  const frames = Math.max(0, Math.floor((half.length - WINDOW - maxLag - 2) / (HOP / 2)))
+  const rms = new Float32Array(frames)
+  let loud = 0
+  for (let f = 0; f < frames; f++) {
+    let e = 0
+    for (let i = 0; i < WINDOW; i++) e += half[(f * HOP) / 2 + i]! ** 2
+    rms[f] = Math.sqrt(e / WINDOW)
+    loud = Math.max(loud, rms[f]!)
+  }
+  const f0 = new Float32Array(frames)
+  const r = new Float32Array(maxLag + 2)
+  for (let f = 0; f < frames; f++) {
+    if (rms[f]! < loud * 0.05) continue
+    const s = (f * HOP) / 2
+    let best = 0
+    for (let l = minLag; l <= maxLag + 1; l++) {
+      let c = 0
+      let a = 0
+      let b = 0
+      for (let i = 0; i < WINDOW; i++) {
+        const p = half[s + i]!
+        const q = half[s + i + l]!
+        c += p * q
+        a += p * p
+        b += q * q
+      }
+      r[l] = c / Math.sqrt(a * b + 1e-12)
+      if (l <= maxLag) best = Math.max(best, r[l]!)
+    }
+    if (best < 0.6) continue
+    // The shortest lag nearly as alike as the best is one period (the best may be two).
+    let lag = 0
+    for (let l = minLag + 1; l <= maxLag && !lag; l++) if (r[l]! >= 0.85 * best && r[l]! >= r[l - 1]! && r[l]! >= r[l + 1]!) lag = l
+    if (!lag) continue
+    const bend = r[lag - 1]! - 2 * r[lag]! + r[lag + 1]!
+    f0[f] = RATE / 2 / (lag + (bend < 0 ? (r[lag - 1]! - r[lag + 1]!) / (2 * bend) : 0))
+  }
+  return f0
+}
+
+const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[xs.length >> 1]!
+
+/**
+ * How far from the middle note the melody may go, as ratios: 9 semitones up and 8 down. Without
+ * it a gloating man's highs reached 330 Hz, a squeak.
+ */
+const NOTES = [2 ** (-8 / 12), 2 ** (9 / 12)] as const
+
+/**
+ * The melody widened: each voiced moment's pitch moved away from the line's middle note `swing`
+ * times as far on a log scale, within NOTES and at most 0.6 to 1.7 times its own, its length and
+ * its voice kept.
+ * TD-PSOLA: the line is cut into grains of two periods centred on each period's peak (every 10 ms
+ * where it is not voiced) and laid down again at the same times, closer together for a higher
+ * note and further apart for a lower one. At a swing of 1 the line comes back as it was, but for
+ * any note beyond NOTES.
+ */
+function widen(x: Float32Array, swing: number): Float32Array {
+  const f0 = pitch(x)
+  const frames = f0.length
+  const voiced = [...f0].filter((f) => f > 0)
+  if (voiced.length < 3) return x
+  const middle = median(voiced)
+  // An octave out is the tracking's mistake, not a note.
+  for (let f = 0; f < frames; f++) {
+    if (!f0[f]) continue
+    while (f0[f]! > 1.9 * middle) f0[f]! /= 2
+    while (f0[f]! < 0.5 * middle) f0[f]! *= 2
+  }
+  // Each over five frames by its median; a frame without two voiced neighbours there is not voiced.
+  const smooth = new Float32Array(frames)
+  for (let f = 0; f < frames; f++) {
+    if (!f0[f]) continue
+    const near: number[] = []
+    for (let k = Math.max(0, f - 2); k <= Math.min(frames - 1, f + 2); k++) if (f0[k]) near.push(f0[k]!)
+    if (near.length >= 3) smooth[f] = median(near)
+  }
+  const frameAt = (t: number) => Math.min(frames - 1, Math.max(0, Math.round((t - WINDOW) / HOP)))
+  // Peaks one period apart where it is voiced, every HOP where it is not.
+  const marks = [0]
+  const periodic = [false]
+  for (let c = 0; ; ) {
+    const hz = smooth[frameAt(c)]!
+    let m = c + HOP
+    if (hz > 0) {
+      const period = RATE / hz
+      const after = periodic.at(-1)!
+      const lo = after ? Math.round(c + 0.75 * period) : c + 1
+      const hi = Math.round(c + (after ? 1.25 : 1) * period)
+      if (hi >= x.length) break
+      m = lo
+      for (let i = lo; i <= hi; i++) if (x[i]! > x[m]!) m = i
+    }
+    if (m >= x.length) break
+    marks.push(m)
+    periodic.push(hz > 0)
+    c = m
+  }
+  const y = new Float32Array(x.length)
+  let j = 0
+  for (let t = 0; t < x.length; ) {
+    while (j + 1 < marks.length && Math.abs(marks[j + 1]! - t) <= Math.abs(marks[j]! - t)) j++
+    const m = marks[j]!
+    const right = j + 1 < marks.length ? marks[j + 1]! - m : HOP
+    const left = j > 0 ? m - marks[j - 1]! : right
+    const hz = smooth[frameAt(m)]!
+    // How much higher this note is to be; the grains are as many more, each as much quieter.
+    const note = Math.min(NOTES[1], Math.max(NOTES[0], (hz / middle) ** swing))
+    const up = periodic[j] && hz > 0 ? Math.min(1.7, Math.max(0.6, (note * middle) / hz)) : 1
+    const at = Math.round(t)
+    for (let i = Math.max(-left, -m, -at); i < right && m + i < x.length && at + i < y.length; i++) {
+      const w = i < 0 ? 0.5 - 0.5 * Math.cos((Math.PI * (i + left)) / left) : 0.5 + 0.5 * Math.cos((Math.PI * i) / right)
+      y[at + i]! += (x[m + i]! * w) / up
+    }
+    t += right / up
+  }
+  return y
+}
+
+// ------------------------------------------------------------------------------ the age
 
 /**
  * Older: the line read through at `deepen` of its own rate (lower and fuller, as from a bigger,
@@ -130,7 +264,7 @@ function mp3(x: Float32Array): Uint8Array {
 port.on('message', (r: Render) => {
   void (async () => {
     try {
-      const ph = await phonemes(r.text, r.accent)
+      const ph = await phonemes(r.text)
       const ids = [0, ...[...ph].flatMap((c) => (c in vocab ? [vocab[c]!] : [])), 0]
       if (ids.length - 2 >= ROWS) throw new Error(`"${r.text}" is too long to say (${ids.length - 2} sounds, at most ${ROWS - 1})`)
       const out = await session.run({
@@ -139,7 +273,7 @@ port.on('message', (r: Render) => {
         // Quicker by as much as the age will slow it.
         speed: new ort.Tensor('float32', [r.speed / r.age.deepen], [1]),
       })
-      const wave = older(out.waveform!.data as Float32Array, r.age)
+      const wave = older(widen(out.waveform!.data as Float32Array, r.swing), r.age)
       level(wave, r.db)
       const bytes = mp3(wave)
       port.postMessage({ id: r.id, mp3: bytes, secs: wave.length / RATE } satisfies Rendered)

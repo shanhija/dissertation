@@ -7,68 +7,92 @@
  * Kokoro-82M (Apache-2.0, `npm install` fetches it into node_modules/.cache/voice) speaks every
  * line in a worker thread (voice-worker.ts), as MP3 that goes out with the taunt. Every doctor has
  * a voice of their own, worked out from their browser's key so a friend sounds the same every
- * game: two of Kokoro's men mixed, an accent (mostly English), a pace, an age and a temper, the
- * tone they fall into most. Every doctor is a pompous old man (2026-11-10: "can you make the
- * taunts male and more pomptous and oldish?"): slow, and played back a little slower than Kokoro
- * said it (Kokoro is asked to hurry by as much), which lowers the pitch and the whole voice as in
- * a bigger, older man, with a slight tremble of age in the pitch. Each line is said in a tone: the
- * doctor's prosody (pitch, pace, intonation) is pulled toward voices that speak that way while
- * the timbre stays theirs, a man's in every tone. Measured on three doctors (2026-11-10), before
- * the age: booming lowers the pitch and slows down, indignant raises it about a fifth and hurries,
- * gloating swings it wider, hushed is slower and breathier, sniffy is slower and plummier. The ear
- * has the last word: TONES and the ranges in speakerOf are what to tune.
+ * game: a man or a woman, two of Kokoro's voices of that sex mixed, led by an English one, a
+ * pace, an age and a temper, the tone they fall into most.
+ *
+ * Every doctor is an old British orator (2026-11-10: "can you make the taunts male and more
+ * pomptous and oldish?", then "can be woman as well. i'd prefer a bit more similar to old british
+ * style with lots of tone changes", "i meant notes. high to low to high"): English phonemes, slow,
+ * the melody widened (each note moved away from the line's middle note, so the highs go higher and
+ * the lows lower), and played back a little slower than Kokoro said it (Kokoro is asked to hurry
+ * by as much), which lowers the pitch and the whole voice as in an older speaker, with a slight
+ * tremble of age.
+ *
+ * Each line is said in a tone: the doctor's prosody (pitch, pace, intonation) is pulled toward
+ * voices of their own sex that speak that way while the timbre stays theirs, and the melody is
+ * widened by the tone's swing. Measured (2026-11-10), before the swing and the age: booming lowers
+ * the pitch and slows down, indignant raises it about a fifth and hurries, gloating swings it
+ * wider, hushed is slower and breathier, sniffy is slower and flatter. The ear has the last word:
+ * TONES and the ranges in speakerOf are what to tune.
  */
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
 
-/** Kokoro's English men the doctors are mixed from, American (am) and British (bm), and Nicole, whose prosody alone (her whisper, never her timbre) is the hushed tone. Adam is left out: his makers grade him F. */
+/**
+ * Kokoro's English voices the doctors are mixed from, American (a) and British (b). Measured with
+ * English phonemes: Lewis 81 Hz, Onyx 88, Echo 109, Puck 113, Michael 114, Fable 114, Daniel 122,
+ * Liam 126, Fenrir 137, George 142, Santa 150, Eric 160; Alloy 143, Nicole 151 (a whisper), Kore
+ * 155, Nova 164, Sky 166, River 178, Emma 180 (the flattest), Aoede 180, Isabella 197, Bella 198,
+ * Sarah 198, Heart 205, Lily 205, Jessica 209, Alice 211. Adam is left out: his makers grade him F.
+ */
 export const MEN = ['am_echo', 'am_eric', 'am_fenrir', 'am_liam', 'am_michael', 'am_onyx', 'am_puck', 'am_santa', 'bm_daniel', 'bm_fable', 'bm_george', 'bm_lewis'] as const
-export const KOKORO = [...MEN, 'af_nicole'] as const
+export const WOMEN = ['af_alloy', 'af_aoede', 'af_bella', 'af_heart', 'af_jessica', 'af_kore', 'af_nicole', 'af_nova', 'af_river', 'af_sarah', 'af_sky', 'bf_alice', 'bf_emma', 'bf_isabella', 'bf_lily'] as const
+export const KOKORO = [...MEN, ...WOMEN] as const
 export type KokoroVoice = (typeof KOKORO)[number]
-type Man = (typeof MEN)[number]
+export type Sex = 'man' | 'woman'
 
-/** The voices a doctor's own sound is mostly made of: the English gentlemen and the steadier Americans (measured with English phonemes: Lewis 81 Hz, Onyx 88, Michael 114, Fable 114, Daniel 122, Fenrir 137, George 142). */
-const LEADING: Man[] = ['bm_george', 'bm_lewis', 'bm_fable', 'bm_daniel', 'am_michael', 'am_fenrir', 'am_onyx']
+/** The voices a doctor's own sound is mostly made of: the English ones. The rest of their sex is mixed in (Nicole only as the hushed tone). */
+const LEADING: Record<Sex, KokoroVoice[]> = {
+  man: ['bm_george', 'bm_lewis', 'bm_fable', 'bm_daniel'],
+  woman: ['bf_emma', 'bf_isabella', 'bf_alice', 'bf_lily'],
+}
 
-export type Accent = 'en' | 'en-us'
 /** Voices by weight (the worker divides by the sum). */
 export type Mix = [KokoroVoice, number][]
 
 export type Tone = 'plain' | 'booming' | 'indignant' | 'gloating' | 'hushed' | 'sniffy'
 
 interface ToneRecipe {
-  /** The voices that speak this way: only their prosody (pitch, pace, intonation) is taken. */
-  toward: Mix
+  /** The voices that speak this way, of each sex: only their prosody (pitch, pace, intonation) is taken. */
+  toward: Record<Sex, Mix>
   /** How far the prosody goes toward them, 0..1. */
   prosody: number
+  /** How far the melody is widened: each note's distance from the line's middle note, on a log scale, times this. */
+  swing: number
   /** Times the doctor's own pace. */
   speed: number
   /** Loudness against a plain line, dB. */
   db: number
 }
 
-/** Measured on George with Onyx, Fable with Santa and Michael with Lewis (2026-11-10), before the age deepens them: pitches in Hz from plain. */
+/**
+ * Pulling a voice toward the other sex pulls it toward their pitch (Emma's prosody lifted the men
+ * 35 Hz), so each tone pulls toward voices of the doctor's own sex, but hushed: Nicole's slow,
+ * breathy delivery, which lifts a man only about 10 Hz. A swing of 1.8 took George with Onyx from
+ * 93..148 Hz (the tenth and ninetieth percentiles) to 80..171 and Isabella with Kore from
+ * 157..242 to 135..299, the middle note kept, the voice measurably a little less clean.
+ */
 const TONES: Record<Tone, ToneRecipe> = {
-  plain: { toward: [], prosody: 0, speed: 1, db: 0 },
+  plain: { toward: { man: [], woman: [] }, prosody: 0, swing: 1.8, speed: 1, db: 0 },
   /** A pronouncement: lower and slower. */
-  booming: { toward: [['bm_lewis', 1], ['am_onyx', 1]], prosody: 0.6, speed: 0.9, db: 2 },
-  /** How dare you, sir: up from 123, 133, 112 to 145, 153, 150, quicker, swinging wider. */
-  indignant: { toward: [['am_eric', 1], ['am_santa', 1]], prosody: 0.65, speed: 1.05, db: 1 },
-  /** Chuckling: Santa's wide swing. */
-  gloating: { toward: [['am_santa', 1]], prosody: 0.7, speed: 0.95, db: 0 },
-  /** An aside: Nicole's slow breathy delivery (a third longer at the same speed), up 10 Hz or so, quiet. */
-  hushed: { toward: [['af_nicole', 1]], prosody: 0.6, speed: 1.15, db: -5 },
-  /** Haughty: George's and Daniel's measured delivery, slower. */
-  sniffy: { toward: [['bm_george', 1], ['bm_daniel', 1]], prosody: 0.7, speed: 0.88, db: -1 },
+  booming: { toward: { man: [['bm_lewis', 1], ['am_onyx', 1]], woman: [['af_alloy', 1], ['af_kore', 1]] }, prosody: 0.6, swing: 1.6, speed: 0.9, db: 2 },
+  /** How dare you: higher and quicker. */
+  indignant: { toward: { man: [['am_eric', 1], ['am_santa', 1]], woman: [['bf_alice', 1], ['af_jessica', 1]] }, prosody: 0.65, swing: 2.1, speed: 1.05, db: 1 },
+  /** Chuckling: the widest swingers. */
+  gloating: { toward: { man: [['am_santa', 1]], woman: [['af_aoede', 1], ['bf_alice', 1]] }, prosody: 0.7, swing: 2.2, speed: 0.95, db: 0 },
+  /** An aside: slow, breathy and quiet. */
+  hushed: { toward: { man: [['af_nicole', 1]], woman: [['af_nicole', 1]] }, prosody: 0.6, swing: 1.5, speed: 1.15, db: -5 },
+  /** Haughty: a measured delivery, drawled up and down. */
+  sniffy: { toward: { man: [['bm_george', 1], ['bm_daniel', 1]], woman: [['bf_emma', 1]] }, prosody: 0.7, swing: 1.9, speed: 0.88, db: -1 },
 }
 const TEMPERS = (Object.keys(TONES) as Tone[]).filter((t) => t !== 'plain')
 
 export interface Speaker {
-  accent: Accent
+  sex: Sex
   /** What the doctor's own voice is mixed from, their timbre and their usual prosody alike. */
-  own: [Man, number][]
+  own: Mix
   /** Their usual pace, as heard. */
   pace: number
   /** Their age: played back at this rate (under 1, lower and fuller), the pitch trembling by `depth` (a share of it) `hz` times a second. */
@@ -94,18 +118,20 @@ export function speakerOf(key: string): Speaker {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
-  const lead = LEADING[Math.floor(rnd() * LEADING.length)]!
-  const others = MEN.filter((v) => v !== lead)
+  const sex: Sex = rnd() < 0.5 ? 'man' : 'woman'
+  const lead = LEADING[sex][Math.floor(rnd() * LEADING[sex].length)]!
+  const others = (sex === 'man' ? MEN : WOMEN).filter((v) => v !== lead && v !== 'af_nicole')
   const second = others[Math.floor(rnd() * others.length)]!
   const w = 0.2 + rnd() * 0.25
   return {
-    accent: rnd() < 0.75 ? 'en' : 'en-us',
+    sex,
     own: [
       [lead, 1 - w],
       [second, w],
     ],
     pace: 0.86 + rnd() * 0.1,
-    age: { deepen: 0.88 + rnd() * 0.06, depth: 0.008 + rnd() * 0.008, hz: 4.5 + rnd() * 1.5 },
+    // A woman is deepened less: as much takes her toward a man's pitch.
+    age: { deepen: (sex === 'man' ? 0.88 : 0.91) + rnd() * 0.05, depth: 0.008 + rnd() * 0.008, hz: 4.5 + rnd() * 1.5 },
     temper: TEMPERS[Math.floor(rnd() * TEMPERS.length)]!,
   }
 }
@@ -119,13 +145,13 @@ export function toneFor(s: Speaker, random: () => number): Tone {
   return rest[Math.floor(random() * rest.length)]!
 }
 
-/** What the worker is asked: a line, its accent, the style's two halves as mixes of voices, the pace as heard, the age and the level. */
+/** What the worker is asked: a line, the style's two halves as mixes of voices, the melody's swing, the pace as heard, the age and the level. */
 export interface Render {
   id: number
   text: string
-  accent: Accent
   timbre: Mix
   prosody: Mix
+  swing: number
   speed: number
   age: Age
   db: number
@@ -135,9 +161,10 @@ export type Rendered = { id: number; mp3: Uint8Array; secs: number } | { id: num
 
 export function recipe(text: string, s: Speaker, tone: Tone): Omit<Render, 'id'> {
   const t = TONES[tone]
-  const total = t.toward.reduce((a, [, x]) => a + x, 0)
-  const prosody: Mix = [...s.own.map(([v, w]): [KokoroVoice, number] => [v, w * (1 - t.prosody)]), ...t.toward.map(([v, w]): [KokoroVoice, number] => [v, (w / total) * t.prosody])]
-  return { text, accent: s.accent, timbre: s.own, prosody, speed: s.pace * t.speed, age: s.age, db: t.db }
+  const toward = t.toward[s.sex]
+  const total = toward.reduce((a, [, x]) => a + x, 0)
+  const prosody: Mix = [...s.own.map(([v, w]): [KokoroVoice, number] => [v, w * (1 - t.prosody)]), ...toward.map(([v, w]): [KokoroVoice, number] => [v, (w / total) * t.prosody])]
+  return { text, timbre: s.own, prosody, swing: t.swing, speed: s.pace * t.speed, age: s.age, db: t.db }
 }
 
 /** A line as said. */
