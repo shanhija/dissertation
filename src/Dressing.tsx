@@ -259,7 +259,7 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
         onPointerLeave={() => (drag.current = null)}
       >
         <Canvas
-          shadows
+          shadows="percentage"
           dpr={[1, 1.5]}
           camera={{ position: [0, 1.3, 6], fov: 30 }}
           onCreated={({ scene }) => {

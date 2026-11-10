@@ -233,7 +233,7 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
 
   return (
     <div className="round" ref={holder}>
-      <Canvas shadows dpr={pixelRatio(currentOptions())} gl={{ antialias: false, powerPreference: 'high-performance' }} camera={{ fov: currentOptions().fov, near: 0.08, far: 400 }} onPointerDown={() => wakeAudio()}>
+      <Canvas shadows="percentage" dpr={pixelRatio(currentOptions())} gl={{ antialias: false, powerPreference: 'high-performance' }} camera={{ fov: currentOptions().fov, near: 0.08, far: 400 }} onPointerDown={() => wakeAudio()}>
         {controls && <Scene net={net} controls={controls} worldRef={worldRef} fps={fps} />}
       </Canvas>
       {shown.fps && <div className="fps" ref={fps} />}
