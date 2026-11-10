@@ -1,16 +1,56 @@
 # Dissertation
 
+A first-person party brawl for a LAN party, where mad doctors defend their theses and Opus makes whatever the players ask for. One computer, the host, runs the game; everyone plays in a browser on the same network.
+
+## 1. Requirements
+
+**On the host's computer**
+
+- **Node.js 22.18 or newer**, with npm.
+- **The Claude Code CLI, signed in to a Claude subscription.** The game finds it through `CLAUDE_BIN`, the `PATH`, the Claude desktop app or the VS Code extension. Without it the game still plays, but only in its own hall with its own four things, and makes nothing new.
+- **About 1.5 GB of disk** for the packages, the sounds and the voice.
+- **The internet**, during installation for the downloads and while playing for Claude.
+- **Port 3003 open** to the local network, so friends can join.
+
+Made and tested on Linux.
+
+**On each player's computer**
+
+- A recent desktop browser (the game draws with WebGL 2), a keyboard and a mouse.
+- The same local network as the host.
+
+## 2. Installation
+
+Once, on the host's computer:
+
+```
+git clone https://github.com/shanhija/dissertation.git
+cd dissertation
+npm install
+```
+
+`npm install` also downloads the CC0 sound packs (about 284 MB) and builds `sounds/` from them, and fetches the voice, Kokoro-82M (about 330 MB), into `node_modules/.cache/voice`. If either download fails, run `npm run sounds` or `npm run voice` later.
+
+If Claude Code is not signed in yet, run `claude` once and log in.
+
+## 3. Startup
+
+On the host's computer, in the `dissertation` folder:
+
+```
+npm run dev
+```
+
+- **The host** opens http://localhost:3003/.
+- **Friends** open `http://<the host's address>:3003/`. The dressing room shows the addresses to use, and so does the terminal.
+- Only computers on the local network can connect. It is plain http and there is no build: the game runs inside this dev server.
+- Ctrl+C stops it. Everything the game made stays in `library/` for next time.
+
+## What it is
+
 A first-person party brawl for adults, for a LAN party. The players are mad doctors defending their theses, literally: credibility is the health bar, and a doctor at 0 is out of the round. Nothing comes from a weapon stand. A player stops, writes what they want, and a crate comes in beside them while Opus designs it; whoever opens the crate first gets it. Opus builds every round's arena, dresses the doctors from words in the dressing room, and keeps everything it ever made. Haiku writes the taunts and thesis titles, and no line is ever said twice. Kokoro, a small speech model on the host's computer, says every taunt in the doctor's own voice and a tone of the moment.
 
 The brief is [`design.md`](design.md); the decisions and what is still open are in [`plans/dissertation.md`](plans/dissertation.md).
-
-```
-npm install      # once: the packages, the sounds (about 284 MB of CC0 packs) and the voice (Kokoro-82M, about 330 MB), into node_modules/.cache
-npm run dev      # on the host's computer: http://<its address>:3003/, shown in the dressing room for friends
-npm test         # the sim, the arena and thing trials, the game server against fake models
-```
-
-There is no build: it plays only on the dev server, which is where the game runs.
 
 ## How it works
 
@@ -27,10 +67,6 @@ There is no build: it plays only on the dev server, which is where the game runs
 - **Sounds are recorded and placed in the room.** Every sound is a recording (CC0 packs from OpenGameArt, downloaded and built by `npm install`; `scripts/sounds/README.md` lists them), several of each played at a slightly different pitch, so no two shots or footsteps are alike. Each is placed in 3D (left, right, behind), gets duller with distance, is muffled through walls, and rings in the arena's own echo, worked out from its size, what it is made of and how much sky is open over it. The game makes its own sounds from what happens: footsteps by the floor's material and the doctor's gait (a limp is heard), landings, a body hitting the ground, whatever things strike (wood, stone, metal, glass, water or a doctor, by how hard and how heavy), a cry when hurt and a yell when dismissed, explosions with a rumble that carries and a muffled boom far off. Made things choose from some sixty recorded sounds by name.
 - **Arenas are drawn in detail.** Every solid is made of a material (planks, stone, brick, marble, books, chalkboard, brass, glass, water, lava and more), painted in the page as a texture with relief, no image files. Arenas also have solid pieces of any shape built with the modelling kit, decorations and lamps. The page merges it all into one mesh per material, then adds environment reflections, shadows fitted to the arena, ambient occlusion, bloom, a sky with clouds and dust in the light.
 - **The engine is the referee.** One hit takes at most 10. One thing takes at most its budget from a player in any 20 s (10, or 20 for one that is hard to hit or risky), and then it may take again; things can be used again and again unless running out is what was asked for. One attacker takes at most 20 a second from another. No thing reaches every other player at once. Nobody is held still, blinded, kept from their hands, or pulled by a rope or a field more than 5 s at a time: then they shake free, ropes and fields let go, and no new hold takes for 2 s. A fall of more than about 3.5 m costs credibility on landing (put down to whoever hurt the doctor in the last 3 s), and a fall out of the arena costs 10. A thing whose code keeps failing fizzles away.
-
-## What it needs
-
-- **The Claude Code CLI**, signed in to a Claude subscription on the host's computer, found in `CLAUDE_BIN`, the `PATH`, the desktop app or the VS Code extension. Without it the game plays its own hall and its own four things, and makes nothing new.
 
 ## How to play
 
@@ -64,6 +100,13 @@ A page that reloads or a network that blinks in a round costs nothing: the docto
 | `CLAUDE_BIN` | The Claude Code CLI to run. |
 
 The library stays on the computer that runs the game, out of git (a fresh clone starts empty): `things/`, `wear/` and `arenas/` (one JSON file each, with the code and who asked for it in which words), `lines.json` (every taunt and title handed out, and the ones ready), and `log.jsonl` (every request, which model, how long, what went wrong and the failing code). A player's profile (name, title, look) is kept in their own browser.
+
+## Development
+
+```
+npm run typecheck
+npm test         # the sim, the arena and thing trials, the game server against fake models
+```
 
 ## License
 
