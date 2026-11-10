@@ -1,0 +1,1190 @@
+{
+ "packs": {
+  "01": {
+   "name": "100 CC0 metal and wood SFX",
+   "page": "https://opengameart.org/content/100-cc0-metal-and-wood-sfx",
+   "file": "https://opengameart.org/sites/default/files/100-CC0-wood-metal-SFX.zip"
+  },
+  "02": {
+   "name": "100 CC0 SFX #2",
+   "page": "https://opengameart.org/content/100-cc0-sfx-2",
+   "file": "https://opengameart.org/sites/default/files/sfx_100_v2.zip"
+  },
+  "03": {
+   "name": "100 CC0 SFX",
+   "page": "https://opengameart.org/content/100-cc0-sfx",
+   "file": "https://opengameart.org/sites/default/files/100-CC0-SFX_0.zip"
+  },
+  "04": {
+   "name": "15 vocal male strain/hurt/pain/jump sounds",
+   "page": "https://opengameart.org/content/15-vocal-male-strainhurtpainjump-sounds",
+   "file": "https://opengameart.org/sites/default/files/slightscreams.7z"
+  },
+  "05": {
+   "name": "20 Rustles of dry leaves",
+   "page": "https://opengameart.org/content/20-rustles-dry-leaves",
+   "file": "https://opengameart.org/sites/default/files/qubodup-rustle.7z"
+  },
+  "06": {
+   "name": "20 Sword Sound Effects (Attacks and Clashes)",
+   "page": "https://opengameart.org/content/20-sword-sound-effects-attacks-and-clashes",
+   "file": "https://opengameart.org/sites/default/files/sword_clash_-_starninjas_0.zip"
+  },
+  "07": {
+   "name": "20 Sword Sound Effects (Attacks and Clashes)",
+   "page": "https://opengameart.org/content/20-sword-sound-effects-attacks-and-clashes",
+   "file": "https://opengameart.org/sites/default/files/sword_-_starninjas_1.zip"
+  },
+  "08": {
+   "name": "25 CC0 bang / firework SFX",
+   "page": "https://opengameart.org/content/25-cc0-bang-firework-sfx",
+   "file": "https://opengameart.org/sites/default/files/25-CC0-bang-sfx.zip"
+  },
+  "09": {
+   "name": "35 wooden cracks/hits/destructions",
+   "page": "https://opengameart.org/content/35-wooden-crackshitsdestructions",
+   "file": "https://opengameart.org/sites/default/files/independent_nu_ljudbank-wood_crack_hit_destruction.7z"
+  },
+  "10": {
+   "name": "37 hits/punches",
+   "page": "https://opengameart.org/content/37-hitspunches",
+   "file": "https://opengameart.org/sites/default/files/independent_nu_ljudbank-hits_and_punches.7z"
+  },
+  "11": {
+   "name": "40 CC0 water / splash / slime SFX",
+   "page": "https://opengameart.org/content/40-cc0-water-splash-slime-sfx",
+   "file": "https://opengameart.org/sites/default/files/water-splash-slime-sfx.zip"
+  },
+  "13": {
+   "name": "50 CC0 Sci-Fi SFX",
+   "page": "https://opengameart.org/content/50-cc0-sci-fi-sfx",
+   "file": "https://opengameart.org/sites/default/files/sci-fi-sfx.zip"
+  },
+  "14": {
+   "name": "50 RPG sound effects",
+   "page": "https://opengameart.org/content/50-rpg-sound-effects",
+   "file": "https://opengameart.org/sites/default/files/RPGsounds_Kenney.zip"
+  },
+  "16": {
+   "name": "5 break, crunch impacts",
+   "page": "https://opengameart.org/content/5-break-crunch-impacts",
+   "file": "https://opengameart.org/sites/default/files/independent_nu_ljudbank-break_crunch_impact.7z"
+  },
+  "17": {
+   "name": "60 CC0 Sci-Fi SFX",
+   "page": "https://opengameart.org/content/60-cc0-sci-fi-sfx",
+   "file": "https://opengameart.org/sites/default/files/60-sci-fi-sfx_0.zip"
+  },
+  "18": {
+   "name": "63 Digital sound effects (lasers, phasers, space etc.)",
+   "page": "https://opengameart.org/content/63-digital-sound-effects-lasers-phasers-space-etc",
+   "file": "https://opengameart.org/sites/default/files/Digital_SFX_Set.zip"
+  },
+  "19": {
+   "name": "68 Workshop Sounds",
+   "page": "https://opengameart.org/content/68-workshop-sounds",
+   "file": "https://opengameart.org/sites/default/files/workshop.7z"
+  },
+  "20": {
+   "name": "75 CC0 breaking / falling / hit sfx",
+   "page": "https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx",
+   "file": "https://opengameart.org/sites/default/files/sfx_breaking_and_falling.zip"
+  },
+  "21": {
+   "name": "80 CC0 creature SFX",
+   "page": "https://opengameart.org/content/80-cc0-creature-sfx",
+   "file": "https://opengameart.org/sites/default/files/80-CC0-creature-SFX_0.zip"
+  },
+  "22": {
+   "name": "80 CC0 RPG SFX",
+   "page": "https://opengameart.org/content/80-cc0-rpg-sfx",
+   "file": "https://opengameart.org/sites/default/files/80-CC0-RPG-SFX_0.zip"
+  },
+  "23": {
+   "name": "8 wet squish, slurp impacts",
+   "page": "https://opengameart.org/content/8-wet-squish-slurp-impacts",
+   "file": "https://opengameart.org/sites/default/files/independent_nu_ljudbank-wet_squish_slurp_impacts.7z"
+  },
+  "24": {
+   "name": "Chunky Explosion",
+   "page": "https://opengameart.org/content/chunky-explosion",
+   "file": "https://opengameart.org/sites/default/files/Chunky%20Explosion.mp3"
+  },
+  "25": {
+   "name": "Different steps on wood, stone, leaves, gravel and mud",
+   "page": "https://opengameart.org/content/different-steps-on-wood-stone-leaves-gravel-and-mud",
+   "file": "https://opengameart.org/sites/default/files/%5Bkdd%5DDifferentSteps_0.zip"
+  },
+  "26": {
+   "name": "Door Open, Door Close Set",
+   "page": "https://opengameart.org/content/door-open-door-close-set",
+   "file": "https://opengameart.org/sites/default/files/qubodup-DoorSet.7z"
+  },
+  "27": {
+   "name": "Explosion",
+   "page": "https://opengameart.org/content/explosion-0",
+   "file": "https://opengameart.org/sites/default/files/explosion.wav"
+  },
+  "28": {
+   "name": "Fantozzi's Footsteps (Grass/Sand & Stone)",
+   "page": "https://opengameart.org/content/fantozzis-footsteps-grasssand-stone",
+   "file": "https://opengameart.org/sites/default/files/Fantozzi-footsteps.7z"
+  },
+  "29": {
+   "name": "Fireball",
+   "page": "https://opengameart.org/content/fireball-1",
+   "file": "https://opengameart.org/sites/default/files/105016__julien-matthey__jm-fx-fireball-01.wav"
+  },
+  "30": {
+   "name": "Footsteps Leather, Cloth, Armor",
+   "page": "https://opengameart.org/content/footsteps-leather-cloth-armor",
+   "file": "https://opengameart.org/sites/default/files/footsteps.zip"
+  },
+  "31": {
+   "name": "Jump Landing Sound",
+   "page": "https://opengameart.org/content/jump-landing-sound",
+   "file": "https://opengameart.org/sites/default/files/jumpland44100.mp3"
+  },
+  "34": {
+   "name": "Magic Spell SFX",
+   "page": "https://opengameart.org/content/magic-spell-sfx",
+   "file": "https://opengameart.org/sites/default/files/magical_1_0.ogg"
+  },
+  "35": {
+   "name": "Magic Spell SFX",
+   "page": "https://opengameart.org/content/magic-spell-sfx",
+   "file": "https://opengameart.org/sites/default/files/magical_2.ogg"
+  },
+  "36": {
+   "name": "Magic Spell SFX",
+   "page": "https://opengameart.org/content/magic-spell-sfx",
+   "file": "https://opengameart.org/sites/default/files/magical_3.ogg"
+  },
+  "37": {
+   "name": "Magic Spell SFX",
+   "page": "https://opengameart.org/content/magic-spell-sfx",
+   "file": "https://opengameart.org/sites/default/files/magical_4.ogg"
+  },
+  "38": {
+   "name": "Magic Spell SFX",
+   "page": "https://opengameart.org/content/magic-spell-sfx",
+   "file": "https://opengameart.org/sites/default/files/magical_5.ogg"
+  },
+  "39": {
+   "name": "Magic Spell SFX",
+   "page": "https://opengameart.org/content/magic-spell-sfx",
+   "file": "https://opengameart.org/sites/default/files/magical_6_0.ogg"
+  },
+  "40": {
+   "name": "Magic Spell SFX",
+   "page": "https://opengameart.org/content/magic-spell-sfx",
+   "file": "https://opengameart.org/sites/default/files/magical_7_0.ogg"
+  },
+  "41": {
+   "name": "Male Grunt/Yelling sounds",
+   "page": "https://opengameart.org/content/male-gruntyelling-sounds",
+   "file": "https://opengameart.org/sites/default/files/yelling%20sounds.zip"
+  },
+  "42": {
+   "name": "Metal Interactions",
+   "page": "https://opengameart.org/content/metal-interactions",
+   "file": "https://opengameart.org/sites/default/files/metal_interactions.7z"
+  },
+  "43": {
+   "name": "Muffled Distant Explosion",
+   "page": "https://opengameart.org/content/muffled-distant-explosion",
+   "file": "https://opengameart.org/sites/default/files/NenadSimic%20-%20Muffled%20Distant%20Explosion.wav"
+  },
+  "44": {
+   "name": "Steam release sounds",
+   "page": "https://opengameart.org/content/steam-release-sounds",
+   "file": "https://opengameart.org/sites/default/files/steam_hisses.zip"
+  },
+  "45": {
+   "name": "Swishes Sound Pack",
+   "page": "https://opengameart.org/content/swishes-sound-pack",
+   "file": "https://opengameart.org/sites/default/files/swishes.zip"
+  },
+  "46": {
+   "name": "The Free Firearm Sound Library",
+   "page": "https://opengameart.org/content/the-free-firearm-sound-library",
+   "file": "https://opengameart.org/sites/default/files/Prepared%20SFX%20Library.7z"
+  }
+ },
+ "sounds": {
+  "bang": {
+   "secs": 1.6,
+   "level": -16.0,
+   "gain": 1.1,
+   "from": [
+    "08/x/bang_01.ogg",
+    "08/x/bang_02.ogg",
+    "08/x/bang_04.ogg",
+    "08/x/bang_05.ogg",
+    "08/x/bang_07.ogg",
+    "08/x/bang_08.ogg",
+    "08/x/shot_01.ogg",
+    "08/x/shot_02.ogg"
+   ]
+  },
+  "gunshot": {
+   "secs": 1.8,
+   "level": -16.0,
+   "gain": 1.2,
+   "from": [
+    "46/x/Prepared SFX Library/1911/A_34P.wav",
+    "46/x/Prepared SFX Library/1911/A_42P.wav",
+    "46/x/Prepared SFX Library/Bersa/F_47P.wav",
+    "46/x/Prepared SFX Library/Ruger Mark III/R_30P.wav",
+    "46/x/Prepared SFX Library/Ruger Single Six/S_11P.wav",
+    "46/x/Prepared SFX Library/Ruger Single Six/S_14P.wav",
+    "46/x/Prepared SFX Library/Smith & Wesson 642/V_27P.wav",
+    "46/x/Prepared SFX Library/Walther PPQ/X_31P.wav"
+   ]
+  },
+  "rifle": {
+   "secs": 2.2,
+   "level": -16.0,
+   "gain": 1.25,
+   "from": [
+    "46/x/Prepared SFX Library/1917/B_16P.wav",
+    "46/x/Prepared SFX Library/AK-47/C_27P.wav",
+    "46/x/Prepared SFX Library/AK-47/C_31P.wav",
+    "46/x/Prepared SFX Library/AR-15/D_24P.wav",
+    "46/x/Prepared SFX Library/Arisaka/E_25P.wav",
+    "46/x/Prepared SFX Library/Marlin 336/I_22P.wav",
+    "46/x/Prepared SFX Library/Mosin Nagant/M_21P.wav",
+    "46/x/Prepared SFX Library/SKS/U_19P.wav"
+   ]
+  },
+  "shotgun": {
+   "secs": 2.2,
+   "level": -16.0,
+   "gain": 1.3,
+   "from": [
+    "46/x/Prepared SFX Library/Model 12/K_17P.wav",
+    "46/x/Prepared SFX Library/Model 12/K_22P.wav",
+    "46/x/Prepared SFX Library/Mossberg/N_26P.wav",
+    "46/x/Prepared SFX Library/Mossberg/N_30P.wav",
+    "46/x/Prepared SFX Library/Nova/O_17P.wav",
+    "46/x/Prepared SFX Library/Nova/O_21P.wav"
+   ]
+  },
+  "smg": {
+   "secs": 1.6,
+   "level": -16.0,
+   "gain": 1.15,
+   "from": [
+    "46/x/Prepared SFX Library/CD/H_16P.wav",
+    "46/x/Prepared SFX Library/Carl Gustav M45/G_20P.wav",
+    "46/x/Prepared SFX Library/Carl Gustav M45/G_24P.wav",
+    "46/x/Prepared SFX Library/Carl Gustav M45/G_35P.wav",
+    "46/x/Prepared SFX Library/PPSh/P_18P.wav",
+    "46/x/Prepared SFX Library/PPSh/P_30P.wav"
+   ]
+  },
+  "cannon": {
+   "secs": 3.0,
+   "level": -16.0,
+   "gain": 1.35,
+   "from": [
+    "08/x/cannon_01.ogg",
+    "08/x/cannon_02.ogg",
+    "08/x/cannon_03.ogg",
+    "08/x/cannon_04.ogg",
+    "08/x/cannon_05.ogg"
+   ]
+  },
+  "boom": {
+   "secs": 3.5,
+   "level": -16.0,
+   "gain": 1.4,
+   "from": [
+    "03/x/explosion.ogg",
+    "13/x/explosion_01.ogg",
+    "13/x/explosion_02.ogg",
+    "24/Chunky Explosion.mp3",
+    "27/explosion.wav",
+    "29/105016__julien-matthey__jm-fx-fireball-01.wav"
+   ]
+  },
+  "boom-far": {
+   "secs": 4.0,
+   "level": -16.0,
+   "gain": 1.2,
+   "from": [
+    "43/NenadSimic - Muffled Distant Explosion.wav"
+   ]
+  },
+  "firework": {
+   "secs": 2.5,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "08/x/fw_01.ogg",
+    "08/x/fw_02.ogg",
+    "08/x/fw_03.ogg",
+    "08/x/fw_04.ogg",
+    "08/x/fw_05.ogg",
+    "08/x/fw_06.ogg"
+   ]
+  },
+  "laser": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 0.8,
+   "from": [
+    "13/x/retro_laser_01.ogg",
+    "13/x/retro_laser_02.ogg",
+    "13/x/shoot_02.ogg",
+    "18/x/laser1.mp3",
+    "18/x/laser3.mp3",
+    "18/x/laser5.mp3",
+    "18/x/laser6.mp3",
+    "18/x/laser8.mp3"
+   ]
+  },
+  "zap": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 0.8,
+   "from": [
+    "18/x/zap1.mp3",
+    "18/x/zap2.mp3",
+    "18/x/zapThreeToneDown.mp3",
+    "18/x/zapThreeToneUp.mp3",
+    "18/x/zapTwoTone.mp3",
+    "18/x/zapTwoTone2.mp3"
+   ]
+  },
+  "teleport": {
+   "secs": 2.0,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "13/x/teleport_01.ogg",
+    "13/x/teleport_02.ogg",
+    "18/x/phaseJump1.mp3",
+    "18/x/phaseJump2.mp3",
+    "18/x/phaseJump3.mp3",
+    "18/x/phaseJump4.mp3"
+   ]
+  },
+  "powerup": {
+   "secs": 1.5,
+   "level": -16.0,
+   "gain": 0.7,
+   "from": [
+    "18/x/powerUp1.mp3",
+    "18/x/powerUp10.mp3",
+    "18/x/powerUp12.mp3",
+    "18/x/powerUp2.mp3",
+    "18/x/powerUp4.mp3",
+    "18/x/powerUp5.mp3",
+    "18/x/powerUp7.mp3",
+    "18/x/powerUp8.mp3"
+   ]
+  },
+  "scifi": {
+   "secs": 2.0,
+   "level": -16.0,
+   "gain": 0.8,
+   "from": [
+    "17/x/sfx_01a.ogg",
+    "17/x/sfx_03a.ogg",
+    "17/x/sfx_06.ogg",
+    "17/x/sfx_08b.ogg",
+    "17/x/sfx_11c.ogg",
+    "17/x/sfx_13c.ogg",
+    "17/x/sfx_16b.ogg",
+    "17/x/sfx_19c.ogg"
+   ]
+  },
+  "beep": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 0.5,
+   "from": [
+    "13/x/beep_01.ogg",
+    "13/x/beep_02.ogg",
+    "13/x/terminal_01.ogg",
+    "13/x/terminal_02.ogg",
+    "13/x/terminal_04.ogg",
+    "13/x/terminal_05.ogg",
+    "13/x/terminal_07.ogg",
+    "13/x/terminal_08.ogg"
+   ]
+  },
+  "magic": {
+   "secs": 3.0,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "34/magical_1_0.ogg",
+    "35/magical_2.ogg",
+    "36/magical_3.ogg",
+    "37/magical_4.ogg",
+    "38/magical_5.ogg",
+    "39/magical_6_0.ogg",
+    "40/magical_7_0.ogg"
+   ]
+  },
+  "whoosh": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 0.8,
+   "from": [
+    "02/x/sfx100v2_air_01.ogg",
+    "02/x/sfx100v2_air_03.ogg",
+    "45/x/swishes/swish-10.wav",
+    "45/x/swishes/swish-12.wav",
+    "45/x/swishes/swish-2.wav",
+    "45/x/swishes/swish-4.wav",
+    "45/x/swishes/swish-6.wav",
+    "45/x/swishes/swish-8.wav"
+   ]
+  },
+  "boing": {
+   "secs": 1.5,
+   "level": -16.0,
+   "gain": 0.8,
+   "from": [
+    "01/x/metal_spring_01.ogg",
+    "01/x/metal_spring_02.ogg",
+    "03/x/spring_01.ogg",
+    "03/x/spring_03.ogg",
+    "03/x/spring_04.ogg",
+    "03/x/spring_05.ogg",
+    "03/x/spring_07.ogg",
+    "03/x/spring_08.ogg"
+   ]
+  },
+  "squeak": {
+   "secs": 1.2,
+   "level": -16.0,
+   "gain": 0.7,
+   "from": [
+    "01/x/wood_squeak_01.ogg",
+    "01/x/wood_squeak_02.ogg",
+    "14/x/OGG/creak1.ogg",
+    "14/x/OGG/creak2.ogg",
+    "14/x/OGG/creak3.ogg"
+   ]
+  },
+  "creak": {
+   "secs": 2.0,
+   "level": -16.0,
+   "gain": 0.8,
+   "from": [
+    "14/x/OGG/creak1.ogg",
+    "14/x/OGG/creak2.ogg",
+    "14/x/OGG/creak3.ogg"
+   ]
+  },
+  "thud": {
+   "secs": 1.2,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "01/x/wood_falling_01.ogg",
+    "01/x/wood_falling_02.ogg",
+    "01/x/wood_falling_04.ogg",
+    "01/x/wood_falling_05.ogg",
+    "20/x/bfh1_falling_01.ogg",
+    "20/x/bfh1_falling_03.ogg",
+    "20/x/bfh1_falling_04.ogg",
+    "20/x/bfh1_falling_06.ogg"
+   ]
+  },
+  "ring": {
+   "secs": 3.0,
+   "level": -16.0,
+   "gain": 0.8,
+   "from": [
+    "03/x/bell_01.ogg",
+    "03/x/bell_02.ogg",
+    "03/x/bell_03.ogg"
+   ]
+  },
+  "gong": {
+   "secs": 4.0,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "03/x/gong_01.ogg",
+    "03/x/gong_02.ogg"
+   ]
+  },
+  "splat": {
+   "secs": 1.2,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "11/x/slime_01.ogg",
+    "11/x/slime_03.ogg",
+    "11/x/slime_05.ogg",
+    "11/x/slime_07.ogg",
+    "23/x/impsplat/impactsplat01.mp3.flac",
+    "23/x/impsplat/impactsplat03.mp3.flac",
+    "23/x/impsplat/impactsplat05.mp3.flac",
+    "23/x/impsplat/impactsplat07.mp3.flac"
+   ]
+  },
+  "crunch": {
+   "secs": 1.2,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "16/x/impcrunch/impactcrunch01.mp3.flac",
+    "16/x/impcrunch/impactcrunch02.mp3.flac",
+    "16/x/impcrunch/impactcrunch03.mp3.flac",
+    "16/x/impcrunch/impactcrunch04.mp3.flac",
+    "16/x/impcrunch/impactcrunch05.mp3.flac",
+    "20/x/bfh1_breaking_01.ogg",
+    "20/x/bfh1_breaking_02.ogg",
+    "20/x/bfh1_breaking_03.ogg"
+   ]
+  },
+  "punch": {
+   "secs": 0.8,
+   "level": -16.0,
+   "gain": 1.1,
+   "from": [
+    "10/x/hits/hit01.mp3.flac",
+    "10/x/hits/hit05.mp3.flac",
+    "10/x/hits/hit10.mp3.flac",
+    "10/x/hits/hit14.mp3.flac",
+    "10/x/hits/hit19.mp3.flac",
+    "10/x/hits/hit24.mp3.flac",
+    "10/x/hits/hit28.mp3.flac",
+    "10/x/hits/hit33.mp3.flac"
+   ]
+  },
+  "clang": {
+   "secs": 1.6,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "01/x/metal_hit_01.ogg",
+    "01/x/metal_hit_02.ogg",
+    "01/x/metal_hit_04.ogg",
+    "01/x/metal_hit_05.ogg",
+    "20/x/bfh1_metal_hit_01.ogg",
+    "20/x/bfh1_metal_hit_02.ogg",
+    "20/x/bfh1_metal_hit_04.ogg",
+    "20/x/bfh1_metal_hit_05.ogg"
+   ]
+  },
+  "knock": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "01/x/wood_hit_01.ogg",
+    "01/x/wood_hit_05.ogg",
+    "01/x/wood_hit_09.ogg",
+    "09/x/wood_impact/impactwood04.mp3.flac",
+    "09/x/wood_impact/impactwood09.mp3.flac",
+    "09/x/wood_impact/impactwood13.mp3.flac",
+    "09/x/wood_impact/impactwood17.mp3.flac",
+    "09/x/wood_impact/impactwood21.mp3.flac"
+   ]
+  },
+  "smash": {
+   "secs": 1.8,
+   "level": -16.0,
+   "gain": 1.1,
+   "from": [
+    "01/x/wood_breaking_01.ogg",
+    "01/x/wood_breaking_02.ogg",
+    "09/x/wood_impact/crack02.mp3.flac",
+    "09/x/wood_impact/crack04.mp3.flac",
+    "09/x/wood_impact/crack06.mp3.flac",
+    "09/x/wood_impact/crack08.mp3.flac",
+    "09/x/wood_impact/crack10.mp3.flac",
+    "20/x/bfh1_breaking_02.ogg"
+   ]
+  },
+  "shatter": {
+   "secs": 1.8,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "02/x/sfx100v2_glass_01.ogg",
+    "02/x/sfx100v2_glass_02.ogg",
+    "02/x/sfx100v2_glass_04.ogg",
+    "02/x/sfx100v2_glass_05.ogg",
+    "20/x/bfh1_glass_breaking_01.ogg",
+    "20/x/bfh1_glass_breaking_02.ogg",
+    "20/x/bfh1_glass_breaking_04.ogg",
+    "20/x/bfh1_glass_breaking_05.ogg"
+   ]
+  },
+  "clink": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "03/x/dishes_01.ogg",
+    "03/x/dishes_02.ogg",
+    "03/x/dishes_03.ogg",
+    "03/x/dishes_04.ogg",
+    "20/x/bfh1_glass_hit_01.ogg",
+    "20/x/bfh1_glass_hit_02.ogg"
+   ]
+  },
+  "splash": {
+   "secs": 1.5,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "11/x/splash_01.ogg",
+    "11/x/splash_02.ogg",
+    "11/x/splash_04.ogg",
+    "11/x/splash_06.ogg",
+    "11/x/splash_08.ogg",
+    "11/x/splash_10.ogg",
+    "11/x/splash_12.ogg",
+    "11/x/splash_14.ogg"
+   ]
+  },
+  "bubble": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 0.7,
+   "from": [
+    "03/x/plop_01.ogg",
+    "03/x/plop_02.ogg",
+    "11/x/bubble_01.ogg",
+    "11/x/bubble_02.ogg",
+    "11/x/bubble_03.ogg"
+   ]
+  },
+  "slime": {
+   "secs": 1.2,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "11/x/slime_09.ogg",
+    "11/x/slime_10.ogg",
+    "11/x/slime_11.ogg",
+    "11/x/slime_13.ogg",
+    "11/x/slime_14.ogg",
+    "11/x/slime_15.ogg"
+   ]
+  },
+  "clash": {
+   "secs": 1.4,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "06/x/sword_clash.1.ogg",
+    "06/x/sword_clash.10.ogg",
+    "06/x/sword_clash.2.ogg",
+    "06/x/sword_clash.3.ogg",
+    "06/x/sword_clash.5.ogg",
+    "06/x/sword_clash.6.ogg",
+    "06/x/sword_clash.7.ogg",
+    "06/x/sword_clash.8.ogg"
+   ]
+  },
+  "blade": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "07/x/sword - StarNinjas/sword.1.ogg",
+    "07/x/sword - StarNinjas/sword.2.ogg",
+    "07/x/sword - StarNinjas/sword.4.ogg",
+    "07/x/sword - StarNinjas/sword.6.ogg",
+    "07/x/sword - StarNinjas/sword.9.ogg",
+    "14/x/OGG/drawKnife2.ogg",
+    "14/x/OGG/knifeSlice.ogg",
+    "22/x/blade_01.ogg"
+   ]
+  },
+  "chain": {
+   "secs": 1.5,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "22/x/chain_01.ogg",
+    "22/x/chain_02.ogg",
+    "22/x/chain_03.ogg"
+   ]
+  },
+  "coins": {
+   "secs": 1.2,
+   "level": -16.0,
+   "gain": 0.7,
+   "from": [
+    "14/x/OGG/handleCoins.ogg",
+    "14/x/OGG/handleCoins2.ogg",
+    "22/x/item_coins_01.ogg",
+    "22/x/item_coins_02.ogg",
+    "22/x/item_coins_03.ogg",
+    "22/x/item_coins_04.ogg"
+   ]
+  },
+  "chime": {
+   "secs": 1.5,
+   "level": -16.0,
+   "gain": 0.6,
+   "from": [
+    "22/x/item_gem_01.ogg",
+    "22/x/item_gem_02.ogg",
+    "22/x/item_gem_03.ogg",
+    "22/x/item_gem_04.ogg"
+   ]
+  },
+  "page": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 0.6,
+   "from": [
+    "03/x/paper_01.ogg",
+    "03/x/paper_02.ogg",
+    "03/x/paper_03.ogg",
+    "03/x/paper_04.ogg",
+    "14/x/OGG/bookFlip1.ogg",
+    "14/x/OGG/bookFlip2.ogg",
+    "14/x/OGG/bookFlip3.ogg"
+   ]
+  },
+  "book": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 0.8,
+   "from": [
+    "14/x/OGG/bookClose.ogg",
+    "14/x/OGG/bookOpen.ogg",
+    "14/x/OGG/bookPlace1.ogg",
+    "14/x/OGG/bookPlace2.ogg",
+    "14/x/OGG/bookPlace3.ogg",
+    "22/x/book_01.ogg",
+    "22/x/book_02.ogg",
+    "22/x/book_03.ogg"
+   ]
+  },
+  "door": {
+   "secs": 1.6,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "14/x/OGG/doorClose_1.ogg",
+    "14/x/OGG/doorClose_2.ogg",
+    "14/x/OGG/doorClose_4.ogg",
+    "26/x/qubodup-DoorSet/ogg/qubodup-DoorClose02.ogg",
+    "26/x/qubodup-DoorSet/ogg/qubodup-DoorClose03.ogg",
+    "26/x/qubodup-DoorSet/ogg/qubodup-DoorClose05.ogg"
+   ]
+  },
+  "keys": {
+   "secs": 1.2,
+   "level": -16.0,
+   "gain": 0.6,
+   "from": [
+    "01/x/keys_01.ogg",
+    "01/x/keys_02.ogg",
+    "01/x/keys_03.ogg",
+    "01/x/keys_05.ogg",
+    "01/x/keys_06.ogg"
+   ]
+  },
+  "click": {
+   "secs": 0.6,
+   "level": -16.0,
+   "gain": 0.5,
+   "from": [
+    "02/x/sfx100v2_switch_01.ogg",
+    "02/x/sfx100v2_switch_02.ogg",
+    "03/x/switch_01.ogg",
+    "14/x/OGG/metalClick.ogg",
+    "14/x/OGG/metalLatch.ogg",
+    "42/x/metal_interactions/metal_button_press1.wav"
+   ]
+  },
+  "hammer": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "01/x/hammer_01.ogg",
+    "01/x/hammer_02.ogg",
+    "01/x/hammer_03.ogg",
+    "01/x/hammer_04.ogg",
+    "01/x/wood_hammer_01.ogg",
+    "01/x/wood_hammer_02.ogg"
+   ]
+  },
+  "drill": {
+   "secs": 2.5,
+   "level": -16.0,
+   "gain": 0.8,
+   "from": [
+    "19/x/workshop/workshop - drill long.wav",
+    "19/x/workshop/workshop - drill short 1.wav",
+    "19/x/workshop/workshop - drill1.wav",
+    "19/x/workshop/workshop - drill2.wav",
+    "19/x/workshop/workshop - drill4.wav"
+   ]
+  },
+  "steam": {
+   "secs": 2.5,
+   "level": -16.0,
+   "gain": 0.8,
+   "from": [
+    "44/x/steam hisses - Marker #1.wav",
+    "44/x/steam hisses - Marker #2.wav",
+    "44/x/steam hisses - Marker #3.wav",
+    "44/x/steam hisses - Marker #4.wav",
+    "44/x/steam hisses - Marker #5.wav"
+   ]
+  },
+  "stones": {
+   "secs": 1.5,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "02/x/sfx100v2_stones_01.ogg",
+    "02/x/sfx100v2_stones_02.ogg",
+    "02/x/sfx100v2_stones_03.ogg",
+    "22/x/item_stone_01.ogg",
+    "22/x/item_stone_02.ogg",
+    "22/x/item_stone_03.ogg"
+   ]
+  },
+  "thunder": {
+   "secs": 5.0,
+   "level": -16.0,
+   "gain": 1.3,
+   "from": [
+    "02/x/sfx100v2_thunder_01.ogg"
+   ]
+  },
+  "rustle": {
+   "secs": 1.5,
+   "level": -16.0,
+   "gain": 0.6,
+   "from": [
+    "05/x/rustle/rustle01.flac",
+    "05/x/rustle/rustle03.flac",
+    "05/x/rustle/rustle06.flac",
+    "05/x/rustle/rustle08.flac",
+    "05/x/rustle/rustle11.flac",
+    "05/x/rustle/rustle13.flac",
+    "05/x/rustle/rustle16.flac",
+    "05/x/rustle/rustle18.flac"
+   ]
+  },
+  "grunt": {
+   "secs": 1.2,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "21/x/grunt_01.ogg",
+    "21/x/grunt_02.ogg",
+    "21/x/grunt_03.ogg",
+    "21/x/grunt_05.ogg",
+    "41/x/yelling sounds/3grunt1.wav",
+    "41/x/yelling sounds/3grunt2.wav",
+    "41/x/yelling sounds/3grunt4.wav",
+    "41/x/yelling sounds/3grunt5.wav"
+   ]
+  },
+  "yell": {
+   "secs": 1.8,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "41/x/yelling sounds/1yell1.wav",
+    "41/x/yelling sounds/1yell12.wav",
+    "41/x/yelling sounds/1yell15.wav",
+    "41/x/yelling sounds/1yell4.wav",
+    "41/x/yelling sounds/1yell7.wav",
+    "41/x/yelling sounds/2yell1.wav",
+    "41/x/yelling sounds/2yell3.wav",
+    "41/x/yelling sounds/2yell6.wav"
+   ]
+  },
+  "scream": {
+   "secs": 2.2,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "21/x/scream_01.ogg",
+    "21/x/scream_02.ogg",
+    "41/x/yelling sounds/3yell10.wav",
+    "41/x/yelling sounds/3yell12.wav",
+    "41/x/yelling sounds/3yell13.wav",
+    "41/x/yelling sounds/3yell14.wav"
+   ]
+  },
+  "ouch": {
+   "secs": 1.2,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "04/x/slightscream-01.flac",
+    "04/x/slightscream-02.flac",
+    "04/x/slightscream-04.flac",
+    "04/x/slightscream-06.flac",
+    "04/x/slightscream-08.flac",
+    "04/x/slightscream-10.flac",
+    "04/x/slightscream-12.flac",
+    "04/x/slightscream-14.flac"
+   ]
+  },
+  "cough": {
+   "secs": 1.5,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "21/x/cough_01.ogg",
+    "21/x/cough_02.ogg",
+    "21/x/cough_03.ogg"
+   ]
+  },
+  "burp": {
+   "secs": 1.5,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "21/x/burp_01.ogg",
+    "21/x/burp_02.ogg"
+   ]
+  },
+  "roar": {
+   "secs": 2.5,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "21/x/monster_01.ogg",
+    "21/x/monster_02.ogg",
+    "21/x/monster_04.ogg",
+    "21/x/monster_05.ogg",
+    "21/x/monster_07.ogg",
+    "21/x/roar_02.ogg",
+    "21/x/roar_03.ogg",
+    "22/x/creature_roar_02.ogg"
+   ]
+  },
+  "creature": {
+   "secs": 2.0,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "21/x/alien_01.ogg",
+    "21/x/alien_04.ogg",
+    "21/x/bug_01.ogg",
+    "21/x/bug_04.ogg",
+    "21/x/weird_01.ogg",
+    "21/x/weird_04.ogg",
+    "22/x/creature_misc_02.ogg",
+    "22/x/creature_misc_05.ogg"
+   ]
+  },
+  "bark": {
+   "secs": 1.5,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "21/x/barking_01.ogg",
+    "21/x/barking_02.ogg"
+   ]
+  },
+  "step-wood": {
+   "secs": 0.6,
+   "level": -18.0,
+   "gain": 1,
+   "from": [
+    "02/x/sfx100v2_footstep_wood_01.ogg",
+    "02/x/sfx100v2_footstep_wood_03.ogg",
+    "14/x/OGG/footstep00.ogg",
+    "14/x/OGG/footstep02.ogg",
+    "14/x/OGG/footstep04.ogg",
+    "14/x/OGG/footstep06.ogg",
+    "14/x/OGG/footstep08.ogg",
+    "25/x/wood01.ogg"
+   ]
+  },
+  "step-stone": {
+   "secs": 0.6,
+   "level": -18.0,
+   "gain": 1,
+   "from": [
+    "25/x/stone01.ogg",
+    "28/x/Fantozzi-footsteps/ogg/Fantozzi-StoneL1.ogg",
+    "28/x/Fantozzi-footsteps/ogg/Fantozzi-StoneL2.ogg",
+    "28/x/Fantozzi-footsteps/ogg/Fantozzi-StoneL3.ogg",
+    "28/x/Fantozzi-footsteps/ogg/Fantozzi-StoneR1.ogg",
+    "28/x/Fantozzi-footsteps/ogg/Fantozzi-StoneR2.ogg",
+    "28/x/Fantozzi-footsteps/ogg/Fantozzi-StoneR3.ogg"
+   ]
+  },
+  "step-soft": {
+   "secs": 0.6,
+   "level": -20.0,
+   "gain": 1,
+   "from": [
+    "30/x/footsteps/step_cloth1.ogg",
+    "30/x/footsteps/step_cloth2.ogg",
+    "30/x/footsteps/step_cloth3.ogg",
+    "30/x/footsteps/step_cloth4.ogg",
+    "30/x/footsteps/step_lth1.ogg",
+    "30/x/footsteps/step_lth2.ogg",
+    "30/x/footsteps/step_lth33.ogg",
+    "30/x/footsteps/step_lth4.ogg"
+   ]
+  },
+  "step-dirt": {
+   "secs": 0.7,
+   "level": -18.0,
+   "gain": 1,
+   "from": [
+    "25/x/gravel.ogg",
+    "25/x/leaves01.ogg",
+    "25/x/leaves02.ogg",
+    "25/x/mud02.ogg",
+    "28/x/Fantozzi-footsteps/ogg/Fantozzi-SandL2.ogg",
+    "28/x/Fantozzi-footsteps/ogg/Fantozzi-SandL3.ogg",
+    "28/x/Fantozzi-footsteps/ogg/Fantozzi-SandR1.ogg",
+    "28/x/Fantozzi-footsteps/ogg/Fantozzi-SandR2.ogg"
+   ]
+  },
+  "step-metal": {
+   "secs": 0.7,
+   "level": -18.0,
+   "gain": 1,
+   "from": [
+    "30/x/footsteps/step_metal (2).ogg",
+    "30/x/footsteps/step_metal (3).ogg",
+    "30/x/footsteps/step_metal (4).ogg",
+    "30/x/footsteps/step_metal.ogg"
+   ]
+  },
+  "step-water": {
+   "secs": 0.8,
+   "level": -18.0,
+   "gain": 1,
+   "from": [
+    "02/x/sfx100v2_footstep_wet_01.ogg",
+    "02/x/sfx100v2_footstep_wet_02.ogg",
+    "02/x/sfx100v2_footstep_wet_03.ogg"
+   ]
+  },
+  "cloth": {
+   "secs": 0.8,
+   "level": -22.0,
+   "gain": 1,
+   "from": [
+    "14/x/OGG/cloth1.ogg",
+    "14/x/OGG/cloth2.ogg",
+    "14/x/OGG/cloth3.ogg",
+    "14/x/OGG/cloth4.ogg",
+    "14/x/OGG/clothBelt.ogg",
+    "14/x/OGG/clothBelt2.ogg"
+   ]
+  },
+  "land": {
+   "secs": 0.8,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "20/x/bfh1_falling_01.ogg",
+    "20/x/bfh1_falling_02.ogg",
+    "20/x/bfh1_falling_03.ogg",
+    "20/x/bfh1_falling_04.ogg",
+    "31/jumpland44100.mp3"
+   ]
+  },
+  "hit-wood": {
+   "secs": 0.9,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "01/x/wood_hit_01.ogg",
+    "01/x/wood_hit_05.ogg",
+    "01/x/wood_hit_09.ogg",
+    "09/x/wood_impact/impactwood04.mp3.flac",
+    "09/x/wood_impact/impactwood09.mp3.flac",
+    "09/x/wood_impact/impactwood13.mp3.flac",
+    "09/x/wood_impact/impactwood17.mp3.flac",
+    "09/x/wood_impact/impactwood21.mp3.flac"
+   ]
+  },
+  "hit-metal": {
+   "secs": 1.2,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "01/x/metal_hit_01.ogg",
+    "01/x/metal_hit_03.ogg",
+    "01/x/metal_hit_05.ogg",
+    "20/x/bfh1_metal_falling_02.ogg",
+    "20/x/bfh1_metal_falling_04.ogg",
+    "20/x/bfh1_metal_hit_01.ogg",
+    "20/x/bfh1_metal_hit_03.ogg",
+    "20/x/bfh1_metal_hit_05.ogg"
+   ]
+  },
+  "hit-stone": {
+   "secs": 1.0,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "02/x/sfx100v2_stones_01.ogg",
+    "02/x/sfx100v2_stones_03.ogg",
+    "20/x/bfh1_rock_breaking_03.ogg",
+    "20/x/bfh1_rock_falling_02.ogg",
+    "20/x/bfh1_rock_falling_05.ogg",
+    "20/x/bfh1_rock_falling_07.ogg",
+    "20/x/bfh1_rock_hit_01.ogg",
+    "22/x/item_stone_02.ogg"
+   ]
+  },
+  "hit-glass": {
+   "secs": 1.2,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "20/x/bfh1_glass_falling_01.ogg",
+    "20/x/bfh1_glass_falling_02.ogg",
+    "20/x/bfh1_glass_falling_03.ogg",
+    "20/x/bfh1_glass_falling_04.ogg",
+    "20/x/bfh1_glass_hit_01.ogg",
+    "20/x/bfh1_glass_hit_02.ogg"
+   ]
+  },
+  "hit-soft": {
+   "secs": 0.8,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "14/x/OGG/dropLeather.ogg",
+    "20/x/bfh1_hit_01.ogg",
+    "20/x/bfh1_hit_03.ogg",
+    "20/x/bfh1_hit_05.ogg",
+    "20/x/bfh1_hit_07.ogg",
+    "20/x/bfh1_hit_08.ogg",
+    "20/x/bfh1_hit_10.ogg",
+    "20/x/bfh1_hit_12.ogg"
+   ]
+  },
+  "hit-flesh": {
+   "secs": 0.6,
+   "level": -16.0,
+   "gain": 1,
+   "from": [
+    "10/x/hits/hit01.mp3.flac",
+    "10/x/hits/hit05.mp3.flac",
+    "10/x/hits/hit10.mp3.flac",
+    "10/x/hits/hit14.mp3.flac",
+    "10/x/hits/hit19.mp3.flac",
+    "10/x/hits/hit24.mp3.flac",
+    "10/x/hits/hit28.mp3.flac",
+    "10/x/hits/hit33.mp3.flac"
+   ]
+  }
+ }
+}

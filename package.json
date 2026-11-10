@@ -1,0 +1,43 @@
+{
+  "name": "dissertation",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "sounds": "node scripts/sounds/build.ts",
+    "postinstall": "node scripts/sounds/build.ts && node scripts/voice/fetch.ts",
+    "voice": "node scripts/voice/fetch.ts"
+  },
+  "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
+    "@dimforge/rapier3d-compat": "^0.21.0",
+    "@react-three/fiber": "^9.7.0",
+    "onnxruntime-node": "^1.31.1",
+    "phonemizer": "^1.2.1",
+    "react": "~19.2.8",
+    "react-dom": "~19.2.8",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@types/three": "^0.185.4",
+    "@types/ws": "^8.18.2",
+    "@vitejs/plugin-react": "^6.1.0",
+    "@wasm-audio-decoders/flac": "^0.2.11",
+    "@wasm-audio-decoders/ogg-vorbis": "^0.1.20",
+    "7zip-bin": "^5.2.0",
+    "mpg123-decoder": "^1.0.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11",
+    "ws": "^8.22.2"
+  }
+}

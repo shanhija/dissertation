@@ -1,0 +1,49 @@
+---
+description: Keep coding-style and plan docs in sync with chat decisions; store them concisely.
+alwaysApply: true
+---
+
+# Canonical rules maintenance
+
+## When to update
+
+After **design or architecture choices**, **accepted edits** that encode new conventions, **explicit** user requests to record a decision, or **user corrections and redirects** (see below):
+
+1. Read the relevant canonical files (below) before large or convention-setting changes.
+2. Update them so future sessions reflect **current** intent—not only chat history.
+3. Make sure the rules are concise. Move any specifics to `/docs` Markdown files.
+
+## User corrections and redirects
+
+When the user tells you to do something **differently** than you did, or points you **somewhere else** (code location, layer, tool, workflow, naming, level of detail, order of steps, explanation style), treat that as **feedback to carry forward**—for **small** nudges as well as large changes.
+
+- If it is a **durable preference** or **repeatable convention** for this repo (not limited to the current task), **record it**: add or adjust the smallest clear bullet in the appropriate `.cursor/rules/` file or, for long specifics, in `docs/` with a pointer from rules—same discipline as other updates in this file. You do not need the user to say “update the rules”; capture when they are clearly stating **how they want work done here**.
+- If it is **only about this task** (one-off data or scope), follow it and **do not** bloat canonical rules—per **Stable facts only** below.
+
+## Canonical files (single source of truth)
+
+| File | Scope |
+|------|--------|
+| `.cursor/rules/coding-style.md` | Languages, libraries, formatting, repo commands, style constraints |
+| `.cursor/rules/plans.md` | Where plan files live and how they evolve |
+
+Add further rule files (e.g. `design.md`) only when a distinct concern accumulates durable conventions.
+
+**Rules vs `docs/`**: Files under `.cursor/rules/` hold **principles and constraints** only. Put **specifics** (long examples, exhaustive shapes, step-by-step migration, rationale essays) in `docs/` and link from rules. Do not let rules grow into tutorials.
+
+Root `.cursorrules` should stay a **short pointer** to `.cursor/rules/`; do not duplicate long prose there.
+
+## How to write updates
+
+- **Consolidate**: merge overlapping bullets; one idea, one line or short block when possible.
+- **Condense**: remove backstory, examples unless they disambiguate; prefer bullets over paragraphs.
+- **Deduplicate**: drop repeated points across files; cross-link with relative paths when needed.
+- **Stable facts only**: record durable conventions, not one-off task notes.
+- **Trim**: if a section grows, summarize or **move detail to `docs/`** and leave a pointer in rules (see **Rules vs `docs/`** above).
+- **No legacy drift**: do not preserve obsolete guidance “for history”; delete or replace it so the repo reflects **current** intent—aligned with the rule to avoid unprompted backward compatibility.
+
+## After updating
+
+Go through all rules files and check the "How to write updates" rules again and fix any problems.
+
+Ensure no contradiction between the canonical files for the same topic (root `.cursorrules` only points here).

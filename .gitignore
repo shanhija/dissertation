@@ -1,0 +1,38 @@
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node
+node_modules/
+dist/
+*.log
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+# Windows NTFS "Mark of the Web" sidecar streams that leak across WSL.
+*:Zone.Identifier
+*Zone.Identifier
+
+# Agent tools' own state on this computer
+.claude/settings.local.json
+.claude/worktrees/
+.serena/
+temp/
+
+# The game's state: what it made, the lines handed out and its log, with the words friends typed.
+# It stays on the computer that runs the game; a fresh clone starts with an empty library.
+/library/
+
+# Built by `npm install` from the CC0 packs named in scripts/sounds/sources.json.
+/sounds/
