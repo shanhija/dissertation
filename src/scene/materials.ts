@@ -39,9 +39,12 @@ function mulberry(seed: number): () => number {
   }
 }
 
-const lattices = new Map<string, Float32Array>()
+const lattices = new Map<number, Float32Array>()
 function lattice(seed: number, px: number, py: number): Float32Array {
-  const key = `${seed}:${px}:${py}`
+  // A small integer for a key: a string made for each of the millions of lookups a texture makes
+  // took 40% of its painting (measured 2026-11-11).
+  if ((seed & 1023) !== seed || (px & 1023) !== px || (py & 1023) !== py) throw new Error(`a lattice of ${px} by ${py} cells, seed ${seed}: each must be a whole number under 1024`)
+  const key = (seed * 1024 + px) * 1024 + py
   let l = lattices.get(key)
   if (!l) {
     const r = mulberry(seed * 7919 + px * 131 + py)
@@ -51,11 +54,11 @@ function lattice(seed: number, px: number, py: number): Float32Array {
   return l
 }
 
-/** Value noise that tiles: u and v in 0..1, px by py cells across the tile. */
+/** Value noise that tiles: u and v in 0..1 (fbm wraps them), px by py cells across the tile. */
 function noise(u: number, v: number, px: number, py: number, seed: number): number {
   const l = lattice(seed, px, py)
-  const x = (((u % 1) + 1) % 1) * px
-  const y = (((v % 1) + 1) % 1) * py
+  const x = u * px
+  const y = v * py
   const x0 = Math.floor(x)
   const y0 = Math.floor(y)
   const fx = x - x0
@@ -73,11 +76,14 @@ function noise(u: number, v: number, px: number, py: number, seed: number): numb
 
 /** Fractal noise, 0..1: octaves of value noise, each twice as fine. */
 function fbm(u: number, v: number, px: number, py: number, octaves: number, seed: number): number {
+  // Wrapped into 0..1 once for all the octaves: the remainder of a fraction is slow to take.
+  const wu = ((u % 1) + 1) % 1
+  const wv = ((v % 1) + 1) % 1
   let sum = 0
   let amp = 0.5
   let norm = 0
   for (let o = 0; o < octaves; o++) {
-    sum += noise(u, v, px << o, py << o, seed + o * 17) * amp
+    sum += noise(wu, wv, px << o, py << o, seed + o * 17) * amp
     norm += amp
     amp *= 0.5
   }
@@ -104,7 +110,7 @@ interface Paint {
   set(x: number, y: number, r: number, g: number, b: number, h: number): void
 }
 
-interface Def {
+type Def = {
   /** Metres one tile covers. */
   tile: number
   roughness: number
@@ -113,22 +119,20 @@ interface Def {
   relief: number
   /** How much of the given colour it takes: 1 whole, 0 none (its own colours). */
   tint: number
-  paint(p: Paint): void
   /** Strokes drawn over the painted colour (chalk). */
   over?: (g: CanvasRenderingContext2D) => void
   emissive?: number
   opacity?: number
-}
-
-/** Fills every pixel from a function of u and v. */
-function each(p: Paint, f: (u: number, v: number, x: number, y: number) => [number, number, number, number]): void {
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const [r, g, b, h] = f(x / SIZE, y / SIZE, x, y)
-      p.set(x, y, r, g, b, h)
+} & (
+  | {
+      /** Each pixel's colour and height from where it is (u and v 0..1, x and y in pixels), painted a band of rows at a time. */
+      pixel: (u: number, v: number, x: number, y: number) => [number, number, number, number]
     }
-  }
-}
+  | {
+      /** The whole texture at once. */
+      paint: (p: Paint) => void
+    }
+)
 
 const grey = (l: number, h: number): [number, number, number, number] => [l, l, l, h]
 
@@ -183,7 +187,7 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 0.8,
     tint: 1,
-    paint: (p) => each(p, (u, v) => grey(0.86 + fbm(u, v, 4, 4, 4, 1) * 0.14, fbm(u, v, 16, 16, 3, 2))),
+    pixel: (u, v) => grey(0.86 + fbm(u, v, 4, 4, 4, 1) * 0.14, fbm(u, v, 16, 16, 3, 2)),
   },
   plaster: {
     tile: 3,
@@ -191,13 +195,12 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 1.2,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v, x, y) => {
-        const m = fbm(u, v, 3, 3, 5, 3)
-        const speck = hash(x, y, 4) * 0.05
-        const l = 0.8 + m * 0.18 + speck
-        return [l, l * 0.99, l * 0.96, fbm(u, v, 24, 24, 3, 5) * 0.7 + speck]
-      }),
+    pixel: (u, v, x, y) => {
+      const m = fbm(u, v, 3, 3, 5, 3)
+      const speck = hash(x, y, 4) * 0.05
+      const l = 0.8 + m * 0.18 + speck
+      return [l, l * 0.99, l * 0.96, fbm(u, v, 24, 24, 3, 5) * 0.7 + speck]
+    },
   },
   planks: {
     tile: 2.4,
@@ -205,16 +208,15 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 2.2,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const b = blocks(u, v, 8, (row) => rowEdges(11, row, 0.45, 0.8))
-        const tone = 0.7 + hash(b.row, b.index, 12) * 0.28
-        const grain = fbm(u + b.index * 0.31, v, 3, 48, 4, 13)
-        const rings = 0.5 + 0.5 * Math.sin((v * 8 * 40 + grain * 14) * Math.PI)
-        const seam = smooth(0, 2.2, b.d)
-        const l = tone * (0.82 + rings * 0.12 + grain * 0.1) * (0.35 + 0.65 * seam)
-        return [l, l * 0.97, l * 0.92, seam * (0.85 + grain * 0.15)]
-      }),
+    pixel: (u, v) => {
+      const b = blocks(u, v, 8, (row) => rowEdges(11, row, 0.45, 0.8))
+      const tone = 0.7 + hash(b.row, b.index, 12) * 0.28
+      const grain = fbm(u + b.index * 0.31, v, 3, 48, 4, 13)
+      const rings = 0.5 + 0.5 * Math.sin((v * 8 * 40 + grain * 14) * Math.PI)
+      const seam = smooth(0, 2.2, b.d)
+      const l = tone * (0.82 + rings * 0.12 + grain * 0.1) * (0.35 + 0.65 * seam)
+      return [l, l * 0.97, l * 0.92, seam * (0.85 + grain * 0.15)]
+    },
   },
   wood: {
     tile: 1.6,
@@ -222,13 +224,12 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 1.0,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const grain = fbm(u, v, 3, 24, 5, 21)
-        const rings = 0.5 + 0.5 * Math.sin((v * 22 + grain * 9) * Math.PI)
-        const l = 0.74 + rings * 0.14 + grain * 0.12
-        return [l, l * 0.96, l * 0.9, rings * 0.4 + grain * 0.3]
-      }),
+    pixel: (u, v) => {
+      const grain = fbm(u, v, 3, 24, 5, 21)
+      const rings = 0.5 + 0.5 * Math.sin((v * 22 + grain * 9) * Math.PI)
+      const l = 0.74 + rings * 0.14 + grain * 0.12
+      return [l, l * 0.96, l * 0.9, rings * 0.4 + grain * 0.3]
+    },
   },
   stone: {
     tile: 3,
@@ -236,17 +237,16 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 4,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const b = blocks(u, v, 4, (row) => rowEdges(31, row, 0.22, 0.5))
-        const tone = 0.72 + hash(b.row, b.index, 32) * 0.22
-        const detail = fbm(u, v, 8, 8, 5, 33)
-        const chip = fbm(u, v, 32, 32, 2, 34)
-        const edge = smooth(2, 9 + chip * 6, b.d)
-        const mortar = b.d < 3
-        const l = mortar ? 0.62 + detail * 0.1 : tone * (0.82 + detail * 0.22) * (0.75 + 0.25 * edge)
-        return [l, l * 0.99, l * 0.95, mortar ? 0.05 : 0.45 + edge * 0.35 + detail * 0.2]
-      }),
+    pixel: (u, v) => {
+      const b = blocks(u, v, 4, (row) => rowEdges(31, row, 0.22, 0.5))
+      const tone = 0.72 + hash(b.row, b.index, 32) * 0.22
+      const detail = fbm(u, v, 8, 8, 5, 33)
+      const chip = fbm(u, v, 32, 32, 2, 34)
+      const edge = smooth(2, 9 + chip * 6, b.d)
+      const mortar = b.d < 3
+      const l = mortar ? 0.62 + detail * 0.1 : tone * (0.82 + detail * 0.22) * (0.75 + 0.25 * edge)
+      return [l, l * 0.99, l * 0.95, mortar ? 0.05 : 0.45 + edge * 0.35 + detail * 0.2]
+    },
   },
   brick: {
     tile: 2,
@@ -254,19 +254,18 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 4,
     tint: 0.9,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const rows = 12
-        const row = Math.floor(v * rows)
-        const off = row % 2 ? 0.125 : 0
-        const b = blocks((u + off) % 1, v, rows, () => [0, 0.25, 0.5, 0.75, 1])
-        const tone = 0.62 + hash(row, b.index + (row % 2) * 7, 41) * 0.3
-        const detail = fbm(u, v, 12, 12, 4, 42)
-        const mortar = b.d < 2.6
-        const edge = smooth(2.6, 6, b.d)
-        const l = mortar ? 0.93 + detail * 0.05 : tone * (0.8 + detail * 0.25)
-        return [l, mortar ? l : l * 0.93, mortar ? l * 0.97 : l * 0.88, mortar ? 0.1 : 0.55 + edge * 0.3 + detail * 0.15]
-      }),
+    pixel: (u, v) => {
+      const rows = 12
+      const row = Math.floor(v * rows)
+      const off = row % 2 ? 0.125 : 0
+      const b = blocks((u + off) % 1, v, rows, () => [0, 0.25, 0.5, 0.75, 1])
+      const tone = 0.62 + hash(row, b.index + (row % 2) * 7, 41) * 0.3
+      const detail = fbm(u, v, 12, 12, 4, 42)
+      const mortar = b.d < 2.6
+      const edge = smooth(2.6, 6, b.d)
+      const l = mortar ? 0.93 + detail * 0.05 : tone * (0.8 + detail * 0.25)
+      return [l, mortar ? l : l * 0.93, mortar ? l * 0.97 : l * 0.88, mortar ? 0.1 : 0.55 + edge * 0.3 + detail * 0.15]
+    },
   },
   marble: {
     tile: 3.2,
@@ -274,14 +273,13 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 0.3,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const t = fbm(u, v, 3, 3, 6, 51)
-        const vein = Math.pow(Math.abs(Math.sin((u * 2 + v + t * 3.2) * Math.PI)), 0.25)
-        const fine = ridged(u, v, 6, 6, 4, 52)
-        const l = 0.97 - (1 - vein) * 0.45 - Math.pow(fine, 8) * 0.18
-        return [l, l, l * 0.98, l]
-      }),
+    pixel: (u, v) => {
+      const t = fbm(u, v, 3, 3, 6, 51)
+      const vein = Math.pow(Math.abs(Math.sin((u * 2 + v + t * 3.2) * Math.PI)), 0.25)
+      const fine = ridged(u, v, 6, 6, 4, 52)
+      const l = 0.97 - (1 - vein) * 0.45 - Math.pow(fine, 8) * 0.18
+      return [l, l, l * 0.98, l]
+    },
   },
   tiles: {
     tile: 2,
@@ -289,15 +287,14 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 2.5,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const b = blocks(u, v, 4, () => [0, 0.25, 0.5, 0.75, 1])
-        const tone = 0.84 + hash(b.row, b.index, 61) * 0.14
-        const detail = fbm(u, v, 8, 8, 3, 62)
-        const grout = b.d < 2.5
-        const l = grout ? 0.58 : tone * (0.94 + detail * 0.08)
-        return [l, l, l * 0.98, grout ? 0 : smooth(2.5, 7, b.d)]
-      }),
+    pixel: (u, v) => {
+      const b = blocks(u, v, 4, () => [0, 0.25, 0.5, 0.75, 1])
+      const tone = 0.84 + hash(b.row, b.index, 61) * 0.14
+      const detail = fbm(u, v, 8, 8, 3, 62)
+      const grout = b.d < 2.5
+      const l = grout ? 0.58 : tone * (0.94 + detail * 0.08)
+      return [l, l, l * 0.98, grout ? 0 : smooth(2.5, 7, b.d)]
+    },
   },
   carpet: {
     tile: 1.6,
@@ -305,17 +302,16 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 0.8,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v, x, y) => {
-        const fibre = hash(x, y, 71) * 0.12
-        const du = Math.abs(((u * 4 + v * 4) % 1) - 0.5)
-        const dv = Math.abs(((u * 4 - v * 4 + 8) % 1) - 0.5)
-        const lattice = Math.min(du, dv) < 0.04 ? 0.8 : 1
-        const rose = Math.hypot(((u * 4) % 1) - 0.5, ((v * 4) % 1) - 0.5) < 0.1 ? 0.86 : 1
-        const wear = 0.9 + fbm(u, v, 2, 2, 3, 72) * 0.1
-        const l = (0.78 + fibre) * lattice * rose * wear
-        return [l, l * 0.97, l * 0.95, fibre * 3 + (lattice < 1 ? 0 : 0.2)]
-      }),
+    pixel: (u, v, x, y) => {
+      const fibre = hash(x, y, 71) * 0.12
+      const du = Math.abs(((u * 4 + v * 4) % 1) - 0.5)
+      const dv = Math.abs(((u * 4 - v * 4 + 8) % 1) - 0.5)
+      const lattice = Math.min(du, dv) < 0.04 ? 0.8 : 1
+      const rose = Math.hypot(((u * 4) % 1) - 0.5, ((v * 4) % 1) - 0.5) < 0.1 ? 0.86 : 1
+      const wear = 0.9 + fbm(u, v, 2, 2, 3, 72) * 0.1
+      const l = (0.78 + fibre) * lattice * rose * wear
+      return [l, l * 0.97, l * 0.95, fibre * 3 + (lattice < 1 ? 0 : 0.2)]
+    },
   },
   fabric: {
     tile: 0.6,
@@ -323,14 +319,13 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 1.4,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const a = 0.5 + 0.5 * Math.sin(u * Math.PI * 2 * 64)
-        const b = 0.5 + 0.5 * Math.sin(v * Math.PI * 2 * 64)
-        const weave = Math.floor(u * 64 + v * 64) % 2 ? a : b
-        const l = 0.8 + weave * 0.14 + fbm(u, v, 4, 4, 3, 81) * 0.06
-        return [l, l, l, weave]
-      }),
+    pixel: (u, v) => {
+      const a = 0.5 + 0.5 * Math.sin(u * Math.PI * 2 * 64)
+      const b = 0.5 + 0.5 * Math.sin(v * Math.PI * 2 * 64)
+      const weave = Math.floor(u * 64 + v * 64) % 2 ? a : b
+      const l = 0.8 + weave * 0.14 + fbm(u, v, 4, 4, 3, 81) * 0.06
+      return [l, l, l, weave]
+    },
   },
   paper: {
     tile: 1.2,
@@ -338,13 +333,12 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 0.5,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v, x, y) => {
-        const blot = fbm(u, v, 3, 3, 5, 91)
-        const fibre = fbm(u, v, 64, 8, 2, 92)
-        const l = 0.86 + blot * 0.12 + fibre * 0.04 - hash(x, y, 93) * 0.02
-        return [l, l * 0.97, l * 0.88, fibre]
-      }),
+    pixel: (u, v, x, y) => {
+      const blot = fbm(u, v, 3, 3, 5, 91)
+      const fibre = fbm(u, v, 64, 8, 2, 92)
+      const l = 0.86 + blot * 0.12 + fibre * 0.04 - hash(x, y, 93) * 0.02
+      return [l, l * 0.97, l * 0.88, fibre]
+    },
   },
   books: {
     tile: 1.6,
@@ -411,11 +405,10 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 0.4,
     tint: 0.2,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const smudge = fbm(u, v, 3, 3, 5, 111)
-        return [0.16 + smudge * 0.08, 0.24 + smudge * 0.08, 0.2 + smudge * 0.07, smudge]
-      }),
+    pixel: (u, v) => {
+      const smudge = fbm(u, v, 3, 3, 5, 111)
+      return [0.16 + smudge * 0.08, 0.24 + smudge * 0.08, 0.2 + smudge * 0.07, smudge]
+    },
     over: (g) => {
       const r = mulberry(112)
       g.strokeStyle = 'rgba(235, 235, 225, 0.55)'
@@ -447,12 +440,11 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0.9,
     relief: 0.6,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const brush = fbm(u, v, 2, 128, 3, 121)
-        const l = 0.8 + brush * 0.16
-        return [l, l, l, brush * 0.4]
-      }),
+    pixel: (u, v) => {
+      const brush = fbm(u, v, 2, 128, 3, 121)
+      const l = 0.8 + brush * 0.16
+      return [l, l, l, brush * 0.4]
+    },
   },
   brass: {
     tile: 1.2,
@@ -460,13 +452,12 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0.95,
     relief: 0.8,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const patina = smooth(0.55, 0.8, fbm(u, v, 4, 4, 5, 131))
-        const brush = fbm(u, v, 2, 96, 2, 132)
-        const l = (0.86 + brush * 0.12) * (1 - patina * 0.35)
-        return [l, l, l * (1 - patina * 0.1), brush * 0.3 + patina * 0.4]
-      }),
+    pixel: (u, v) => {
+      const patina = smooth(0.55, 0.8, fbm(u, v, 4, 4, 5, 131))
+      const brush = fbm(u, v, 2, 96, 2, 132)
+      const l = (0.86 + brush * 0.12) * (1 - patina * 0.35)
+      return [l, l, l * (1 - patina * 0.1), brush * 0.3 + patina * 0.4]
+    },
   },
   glass: {
     tile: 2,
@@ -475,7 +466,7 @@ const DEFS: Record<MaterialName, Def> = {
     relief: 0.2,
     tint: 1,
     opacity: 0.32,
-    paint: (p) => each(p, (u, v) => grey(0.92 + fbm(u, v, 3, 3, 3, 141) * 0.08, 0.5)),
+    pixel: (u, v) => grey(0.92 + fbm(u, v, 3, 3, 3, 141) * 0.08, 0.5),
   },
   concrete: {
     tile: 3,
@@ -483,13 +474,12 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 2,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v, x, y) => {
-        const m = fbm(u, v, 4, 4, 5, 151)
-        const pore = hash(x, y, 152) > 0.996 ? 0.4 : 1
-        const l = (0.72 + m * 0.2) * (pore < 1 ? 0.75 : 1)
-        return [l, l, l * 0.98, m * 0.6 + (pore < 1 ? 0 : 0.3)]
-      }),
+    pixel: (u, v, x, y) => {
+      const m = fbm(u, v, 4, 4, 5, 151)
+      const pore = hash(x, y, 152) > 0.996 ? 0.4 : 1
+      const l = (0.72 + m * 0.2) * (pore < 1 ? 0.75 : 1)
+      return [l, l, l * 0.98, m * 0.6 + (pore < 1 ? 0 : 0.3)]
+    },
   },
   rock: {
     tile: 4,
@@ -497,13 +487,12 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 5,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const crack = Math.pow(ridged(u, v, 4, 4, 5, 161), 6)
-        const m = fbm(u, v, 6, 6, 5, 162)
-        const l = (0.62 + m * 0.32) * (1 - crack * 0.5)
-        return [l, l * 0.98, l * 0.95, m * 0.8 - crack * 0.6 + 0.3]
-      }),
+    pixel: (u, v) => {
+      const crack = Math.pow(ridged(u, v, 4, 4, 5, 161), 6)
+      const m = fbm(u, v, 6, 6, 5, 162)
+      const l = (0.62 + m * 0.32) * (1 - crack * 0.5)
+      return [l, l * 0.98, l * 0.95, m * 0.8 - crack * 0.6 + 0.3]
+    },
   },
   earth: {
     tile: 2.5,
@@ -511,13 +500,12 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 3,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const m = fbm(u, v, 6, 6, 5, 171)
-        const pebble = smooth(0.72, 0.78, fbm(u, v, 24, 24, 2, 172))
-        const l = 0.6 + m * 0.25 + pebble * 0.18
-        return [l, l * 0.95, l * 0.88, m * 0.5 + pebble * 0.5]
-      }),
+    pixel: (u, v) => {
+      const m = fbm(u, v, 6, 6, 5, 171)
+      const pebble = smooth(0.72, 0.78, fbm(u, v, 24, 24, 2, 172))
+      const l = 0.6 + m * 0.25 + pebble * 0.18
+      return [l, l * 0.95, l * 0.88, m * 0.5 + pebble * 0.5]
+    },
   },
   grass: {
     tile: 2,
@@ -525,13 +513,12 @@ const DEFS: Record<MaterialName, Def> = {
     metalness: 0,
     relief: 2,
     tint: 1,
-    paint: (p) =>
-      each(p, (u, v, x, y) => {
-        const blade = fbm(u, v, 96, 24, 2, 181)
-        const patch = fbm(u, v, 3, 3, 4, 182)
-        const l = 0.62 + blade * 0.3 + patch * 0.15 - hash(x, y, 183) * 0.06
-        return [l * 0.95, l, l * 0.85, blade]
-      }),
+    pixel: (u, v, x, y) => {
+      const blade = fbm(u, v, 96, 24, 2, 181)
+      const patch = fbm(u, v, 3, 3, 4, 182)
+      const l = 0.62 + blade * 0.3 + patch * 0.15 - hash(x, y, 183) * 0.06
+      return [l * 0.95, l, l * 0.85, blade]
+    },
   },
   water: {
     tile: 4,
@@ -540,12 +527,11 @@ const DEFS: Record<MaterialName, Def> = {
     relief: 2.5,
     tint: 1,
     opacity: 0.82,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const c = Math.pow(ridged(u, v, 5, 5, 3, 191), 4)
-        const l = 0.78 + c * 0.22
-        return [l, l, l, c]
-      }),
+    pixel: (u, v) => {
+      const c = Math.pow(ridged(u, v, 5, 5, 3, 191), 4)
+      const l = 0.78 + c * 0.22
+      return [l, l, l, c]
+    },
   },
   lava: {
     tile: 4,
@@ -554,13 +540,12 @@ const DEFS: Record<MaterialName, Def> = {
     relief: 4,
     tint: 0.3,
     emissive: 2.2,
-    paint: (p) =>
-      each(p, (u, v) => {
-        const crack = Math.pow(ridged(u, v, 4, 4, 4, 201), 3)
-        const heat = smooth(0.25, 0.9, crack)
-        const crust = 0.12 + fbm(u, v, 10, 10, 3, 202) * 0.08
-        return [crust + heat * 0.9, crust * 0.6 + heat * 0.42, crust * 0.4 + heat * 0.06, 1 - heat]
-      }),
+    pixel: (u, v) => {
+      const crack = Math.pow(ridged(u, v, 4, 4, 4, 201), 3)
+      const heat = smooth(0.25, 0.9, crack)
+      const crust = 0.12 + fbm(u, v, 10, 10, 3, 202) * 0.08
+      return [crust + heat * 0.9, crust * 0.6 + heat * 0.42, crust * 0.4 + heat * 0.06, 1 - heat]
+    },
   },
 }
 
@@ -574,50 +559,78 @@ interface Made {
 
 const made = new Map<MaterialName, Made>()
 
-function makeTextures(name: MaterialName): { map: CanvasTexture; normal: CanvasTexture } {
+interface Textures {
+  map: CanvasTexture
+  normal: CanvasTexture
+}
+
+/** Rows painted in one step of a surface's painting: a few milliseconds' work. */
+const BAND = 16
+
+/**
+ * A surface's two textures, painted a step at a time: a band of rows of colour and height (a
+ * texture painted whole, as the books are, in one step), then the canvas, then a band of rows of
+ * relief. Run to the end when the surface is wanted (surface), or a few milliseconds at a time
+ * ahead of it (warmSurfaces).
+ */
+function* painting(name: MaterialName): Generator<void, Textures, void> {
   const def = DEFS[name]
   const col = new Float32Array(SIZE * SIZE * 3)
   const h = new Float32Array(SIZE * SIZE)
-  def.paint({
-    col,
-    h,
-    set(x, y, r, g, b, hh) {
-      const i = y * SIZE + x
-      col[i * 3] = r
-      col[i * 3 + 1] = g
-      col[i * 3 + 2] = b
-      h[i] = hh
-    },
-  })
+  const set = (x: number, y: number, r: number, g: number, b: number, hh: number) => {
+    const i = y * SIZE + x
+    col[i * 3] = r
+    col[i * 3 + 1] = g
+    col[i * 3 + 2] = b
+    h[i] = hh
+  }
+  if ('paint' in def) def.paint({ col, h, set })
+  else {
+    for (let y0 = 0; y0 < SIZE; y0 += BAND) {
+      for (let y = y0; y < y0 + BAND; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          const [r, g, b, hh] = def.pixel(x / SIZE, y / SIZE, x, y)
+          set(x, y, r, g, b, hh)
+        }
+      }
+      yield
+    }
+  }
   const colour = document.createElement('canvas')
   colour.width = colour.height = SIZE
   const g = colour.getContext('2d')!
   const img = g.createImageData(SIZE, SIZE)
+  const data = img.data
   for (let i = 0; i < SIZE * SIZE; i++) {
-    img.data[i * 4] = clamp01(col[i * 3]!) * 255
-    img.data[i * 4 + 1] = clamp01(col[i * 3 + 1]!) * 255
-    img.data[i * 4 + 2] = clamp01(col[i * 3 + 2]!) * 255
-    img.data[i * 4 + 3] = 255
+    data[i * 4] = clamp01(col[i * 3]!) * 255
+    data[i * 4 + 1] = clamp01(col[i * 3 + 1]!) * 255
+    data[i * 4 + 2] = clamp01(col[i * 3 + 2]!) * 255
+    data[i * 4 + 3] = 255
   }
   g.putImageData(img, 0, 0)
   def.over?.(g)
+  yield
   // The relief: the slope of the height, in tangent space (+y up the texture; the canvas's rows run down).
   const normal = document.createElement('canvas')
   normal.width = normal.height = SIZE
   const ng = normal.getContext('2d')!
   const nimg = ng.createImageData(SIZE, SIZE)
+  const ndata = nimg.data
   const at = (x: number, y: number) => h[((y + SIZE) % SIZE) * SIZE + ((x + SIZE) % SIZE)]!
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const nx = -(at(x + 1, y) - at(x - 1, y)) * def.relief
-      const ny = (at(x, y + 1) - at(x, y - 1)) * def.relief
-      const l = Math.hypot(nx, ny, 1)
-      const i = (y * SIZE + x) * 4
-      nimg.data[i] = ((nx / l) * 0.5 + 0.5) * 255
-      nimg.data[i + 1] = ((ny / l) * 0.5 + 0.5) * 255
-      nimg.data[i + 2] = ((1 / l) * 0.5 + 0.5) * 255
-      nimg.data[i + 3] = 255
+  for (let y0 = 0; y0 < SIZE; y0 += BAND) {
+    for (let y = y0; y < y0 + BAND; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        const nx = -(at(x + 1, y) - at(x - 1, y)) * def.relief
+        const ny = (at(x, y + 1) - at(x, y - 1)) * def.relief
+        const l = Math.hypot(nx, ny, 1)
+        const i = (y * SIZE + x) * 4
+        ndata[i] = ((nx / l) * 0.5 + 0.5) * 255
+        ndata[i + 1] = ((ny / l) * 0.5 + 0.5) * 255
+        ndata[i + 2] = ((1 / l) * 0.5 + 0.5) * 255
+        ndata[i + 3] = 255
+      }
     }
+    yield
   }
   ng.putImageData(nimg, 0, 0)
   const map = new CanvasTexture(colour)
@@ -631,46 +644,86 @@ function makeTextures(name: MaterialName): { map: CanvasTexture; normal: CanvasT
   return { map, normal: nmap }
 }
 
-/** The material for a surface, made the first time it is asked for. Every mesh of it shares it. */
+/** Surfaces painted part of the way ahead (warmSurfaces). */
+const paintings = new Map<MaterialName, Generator<void, Textures, void>>()
+
+/** A surface's material from its textures, kept: every mesh of it shares it. */
+function dress(name: MaterialName, { map, normal }: Textures): Made {
+  const def = DEFS[name]
+  const material = paint(new MeshStandardMaterial({
+    map,
+    normalMap: normal,
+    normalScale: new Vector2(1, 1),
+    roughness: def.roughness,
+    metalness: def.metalness,
+    vertexColors: true,
+  }), PAINT_SURFACE)
+  if (def.emissive) {
+    material.emissiveMap = map
+    material.emissive = new Color('#ffffff')
+    material.emissiveIntensity = def.emissive
+  }
+  if (def.opacity !== undefined) {
+    material.transparent = true
+    material.opacity = def.opacity
+    material.depthWrite = def.opacity > 0.6
+  }
+  const m = { map, normal, material }
+  made.set(name, m)
+  return m
+}
+
+/** The material for a surface, made the first time it is asked for (what was painted ahead of it painted to the end). */
 export function surface(name: MaterialName): MeshStandardMaterial {
   let m = made.get(name)
   if (!m) {
-    const def = DEFS[name]
-    const { map, normal } = makeTextures(name)
-    const material = paint(new MeshStandardMaterial({
-      map,
-      normalMap: normal,
-      normalScale: new Vector2(1, 1),
-      roughness: def.roughness,
-      metalness: def.metalness,
-      vertexColors: true,
-    }), PAINT_SURFACE)
-    if (def.emissive) {
-      material.emissiveMap = map
-      material.emissive = new Color('#ffffff')
-      material.emissiveIntensity = def.emissive
-    }
-    if (def.opacity !== undefined) {
-      material.transparent = true
-      material.opacity = def.opacity
-      material.depthWrite = def.opacity > 0.6
-    }
-    m = { map, normal, material }
-    made.set(name, m)
+    const p = paintings.get(name) ?? painting(name)
+    paintings.delete(name)
+    let r = p.next()
+    while (!r.done) r = p.next()
+    m = dress(name, r.value)
   }
   return m.material
 }
 
-/** Paints every surface ahead, a few at a time, so the first round does not stall on them. */
-export function warmSurfaces(): void {
-  const todo = [...MATERIALS].filter((n) => !made.has(n))
-  const next = () => {
-    const n = todo.shift()
-    if (!n) return
-    surface(n)
-    setTimeout(next, 30)
+/** Milliseconds of painting ahead in one go: less than a frame, so the page draws and answers between. */
+const SLICE_MS = 6
+let warming = false
+
+/**
+ * Paints every surface ahead, `first` first, a few milliseconds at a time, so neither the
+ * dressing room nor the first round stalls on them and the page answers meanwhile (each painted in
+ * one go, they held the page up to 470 ms at a time for 5 s after the dressing room appeared;
+ * measured 2026-11-11).
+ */
+export function warmSurfaces(first: readonly MaterialName[]): void {
+  if (warming) return
+  warming = true
+  const todo = [...new Set([...first, ...MATERIALS])]
+  const step = () => {
+    const until = performance.now() + SLICE_MS
+    while (todo.length && performance.now() < until) {
+      const n = todo[0]!
+      if (made.has(n)) {
+        todo.shift()
+        continue
+      }
+      let p = paintings.get(n)
+      if (!p) {
+        p = painting(n)
+        paintings.set(n, p)
+      }
+      const r = p.next()
+      if (r.done) {
+        paintings.delete(n)
+        todo.shift()
+        dress(n, r.value)
+      }
+    }
+    if (todo.length) setTimeout(step, 0)
+    else warming = false
   }
-  setTimeout(next, 200)
+  setTimeout(step, 0)
 }
 
 /** Moves the water's and the lava's relief a little each frame. */

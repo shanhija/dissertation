@@ -105,11 +105,26 @@ export interface Look {
   worn: Partial<Record<Slot, string>>
 }
 
+/**
+ * Kokoro's voices a player may choose to lead their doctor's (2026-11-11: "allow the player to
+ * choose their voice character name"), named as Kokoro names them: b British or a American, m a
+ * man or f a woman, then the name. Every doctor's voice is mixed from these (and Nicole, a
+ * whisper, only for the hushed tone), so their order is part of every voice: a change to it
+ * changes the doctors' second voices.
+ */
+export const VOICES = [
+  'am_echo', 'am_eric', 'am_fenrir', 'am_liam', 'am_michael', 'am_onyx', 'am_puck', 'am_santa', 'bm_daniel', 'bm_fable', 'bm_george', 'bm_lewis',
+  'af_alloy', 'af_aoede', 'af_bella', 'af_heart', 'af_jessica', 'af_kore', 'af_nova', 'af_river', 'af_sarah', 'af_sky', 'bf_alice', 'bf_emma', 'bf_isabella', 'bf_lily',
+] as const
+export type VoiceName = (typeof VOICES)[number]
+
 export interface Profile {
   name: string
   /** The thesis title; empty asks Haiku for one. */
   title: string
   look: Look
+  /** The voice chosen to lead theirs (null: their own, as their browser's key gives it). */
+  voice: VoiceName | null
 }
 
 /** A wardrobe part: its slot and its model, built around the standard doctor (see the look designer's prompt). */
@@ -511,7 +526,8 @@ export interface ArenaView {
 }
 
 export type ServerMsg =
-  | { type: 'welcome'; you: string }
+  /** Who they are, and the voice that leads their own (the one their key gives them). */
+  | { type: 'welcome'; you: string; ownVoice: VoiceName }
   | { type: 'lobby'; lobby: Lobby }
   | { type: 'arena'; arena: ArenaView | null }
   | { type: 'models'; models: Record<string, Recipe> }

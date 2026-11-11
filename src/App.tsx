@@ -10,8 +10,13 @@ import { Dressing } from './Dressing'
 import { Net } from './net'
 import { closeOptions, openOptions, useOptionsOpen } from './options'
 import { OptionsScreen } from './OptionsScreen'
+import type { MaterialName } from './protocol'
 import { Round } from './Round'
+import { warmSurfaces } from './scene/materials'
 import { wakeAudio } from './sounds'
+
+/** The robing room's surfaces (Room in Dressing.tsx), painted ahead first. */
+const ROBING_ROOM: MaterialName[] = ['planks', 'carpet', 'marble', 'books', 'wood', 'stone']
 
 export function App() {
   const [net] = useState(() => new Net())
@@ -31,6 +36,9 @@ export function App() {
       document.removeEventListener('keydown', wake, true)
     }
   }, [])
+  // Every surface is painted ahead from the start, the robing room's first, while the committee is
+  // being found: neither the dressing room nor the first round stalls on them.
+  useEffect(() => warmSurfaces(ROBING_ROOM), [])
   // O opens and closes the options anywhere but in a text box; Esc closes them.
   useEffect(() => {
     const key = (e: KeyboardEvent) => {

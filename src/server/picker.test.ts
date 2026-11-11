@@ -18,16 +18,6 @@ function picker(): { p: Picker; wait: (ms: number) => void } {
 }
 
 describe('the model picker', () => {
-  it('gives Opus up to four designs at once, Sonnet the fifth and sixth, and Haiku the rest', () => {
-    const { p } = picker()
-    const picked = []
-    for (let i = 0; i < 8; i++) {
-      picked.push(p.pick())
-      p.inFlight++
-    }
-    expect(picked).toEqual(['opus', 'opus', 'opus', 'opus', 'sonnet', 'sonnet', 'haiku', 'haiku'])
-  })
-
   it('keeps Opus after a design that was slow but in time for its crate, and after one that missed it', () => {
     const { p } = picker()
     p.done('opus', CRATE, DESIGN_LIMIT * 1000 - 2500, false)
@@ -92,6 +82,22 @@ describe('the model picker', () => {
 describe('the designers', () => {
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('give Opus every design, however many are in flight at once', async () => {
+    vi.mocked(once).mockClear()
+    let answer = () => {}
+    const answered = new Promise<void>((resolve) => (answer = resolve))
+    vi.mocked(once).mockImplementation(async () => {
+      await answered
+      return { data: {}, ms: 20_000 }
+    })
+    const designers = new CliDesigners({} as never, () => {})
+    const designs = [...Array(8)].map((_, i) => (i % 2 ? designers.wear('a tall hat', 100_000) : designers.thing('a gavel', 100_000, CRATE)))
+    expect(designers.next()).toBe('opus')
+    answer()
+    expect((await Promise.all(designs)).map((a) => a.model)).toEqual(Array(8).fill('opus'))
+    expect(vi.mocked(once).mock.calls.map((call) => call[1].model)).toEqual(Array(8).fill('opus'))
   })
 
   it('count a design late by the whole wait for it, a second try included', async () => {

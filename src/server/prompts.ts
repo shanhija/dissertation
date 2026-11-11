@@ -285,10 +285,25 @@ export function arenaMessage(req: { avoid: string[]; fix: { answer: ArenaAnswer;
 
 // ------------------------------------------------------------------------------ taunts and titles
 
+/**
+ * The taunts are modern English, written for a friend hearing them once in the fight (2026-11-11:
+ * "taunts are difficult to understand. perhaps use modern english still"), and mostly in the
+ * heated tones, as the doctors are fighting. Why this prompt and not the others tried is in
+ * plans/dissertation.md.
+ */
 export const LINES_SYSTEM = {
-  taunt: `You write taunts for Dissertation, a silly brawl between mad doctors defending their theses. A taunt is what a doctor shouts at the others in the middle of a fight: pompous, obscure, old-fashioned and absurd, silly rather than hurtful, as if from a grand old professor of a forgotten century of scholarly quarrels. It is short, at most 8 words in all, in plain English. Most are said in two phrases, each in a different tone, and some in one. Each phrase is words written as they are said aloud, never a noise spelled out, with its own punctuation, and has the tone that fits its words: plain; booming, a pronouncement, low and slow; indignant, affronted, higher and quicker; gloating, chuckling at the others; hushed, an aside; sniffy, haughty and drawn out. Each line does something different from the others and from any listed, in its shape as much as in its subject.`,
+  taunt: `You write taunts for Dissertation, a silly brawl between mad doctors defending their theses, played at a party by friends who speak English well as a second language. A taunt is what a doctor shouts at the others in the heat of the fight, as they knock each other about. Every doctor is a modern academic of towering self-importance: certain of their own genius, grand about all they have done, and openly sorry for everyone less brilliant, which is everyone. That grandeur is the joke, and it is silly rather than hurtful. It is heard once, over the noise of the fight, so it makes one clear point at one hearing, with the word that lands it at the end of its phrase, in the plain, everyday English of today, as people really talk, in words everyone knows, scholar or not. It is short, at most 7 words in all. Most are said in two phrases, each in a different tone, and some in one. Each phrase is said on its own, so it is complete in itself: words written as they are said aloud, every one a real word, never a sound spelled out, with its own punctuation. The doctors are fighting, so their phrases are said hot, each in the hot tone that fits its words: booming, a pronouncement, low and slow; indignant, affronted, higher and quicker; gloating, chuckling at the others. A cool tone only sets off a hot one in the same line: sniffy, haughty and drawn out; hushed, an aside; plain. Each line does something different from the others and from any listed, in its shape as much as in its subject.`,
   title: `You write thesis titles for Dissertation, a silly brawl between mad doctors defending their theses. A title is long-winded, obscure, old-fashioned and absurd, as if from a forgotten century of scholarship; silly, never rude. Every one different in shape and subject from the others and from any listed. At most 16 words.`,
 } as const
+
+/**
+ * The style LINES_SYSTEM.taunt writes in, kept with the taunts in lines.json. Change it when the
+ * prompt changes how the lines sound: the library's taunts in any other style are then dropped
+ * once, ready and handed out alike. Lines listed to Haiku as "Not like any of these" pull its new
+ * ones toward their own style (with the 46 old-fashioned lines listed, 9 of the first 12 it wrote
+ * to a modern prompt were old-fashioned), and a line in a new style will not repeat one in the old.
+ */
+export const TAUNT_STYLE = 'modern'
 
 export const LINES_SCHEMA: Record<'taunt' | 'title', Schema> = {
   taunt: {

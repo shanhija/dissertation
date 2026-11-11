@@ -1,8 +1,9 @@
 /**
  * The library on disk, kept between runs: one pretty-printed JSON file per thing, worn part and
- * arena (`things/`, `wear/`, `arenas/`), every taunt and thesis title ever handed out with the
- * ones ready to go (`lines.json`), and `log.jsonl` (git-ignored) with every request and how it
- * went. Only the dev server writes it. Reading skips a file it cannot parse, and says so.
+ * arena (`things/`, `wear/`, `arenas/`), every taunt (in the style written now) and thesis title
+ * ever handed out with the ones ready to go (`lines.json`), and `log.jsonl` (git-ignored) with
+ * every request and how it went, every taunt said among them. Only the dev server writes it.
+ * Reading skips a file it cannot parse, and says so.
  */
 
 import fs from 'node:fs'
@@ -10,6 +11,7 @@ import path from 'node:path'
 
 import type { Slot } from '../protocol'
 import type { ThingDesign } from '../sim/things'
+import { TAUNT_STYLE } from './prompts'
 import type { Phrase } from './voice'
 
 export interface WearDesign {
@@ -41,8 +43,8 @@ export interface LineStock<T> {
 }
 
 export interface Lines {
-  /** Each taunt as its phrases, each with its tone. */
-  taunts: LineStock<Phrase[]>
+  /** Each taunt as its phrases, each with its tone, all written in one style. */
+  taunts: LineStock<Phrase[]> & { style: typeof TAUNT_STYLE }
   titles: LineStock<string>
 }
 
@@ -68,7 +70,7 @@ export class Store {
   readonly things = new Map<string, ThingDesign>()
   readonly wear = new Map<string, WearDesign>()
   readonly arenas = new Map<string, ArenaDesign>()
-  lines: Lines = { taunts: { used: [], ready: [] }, titles: { used: [], ready: [] } }
+  lines: Lines = { taunts: { style: TAUNT_STYLE, used: [], ready: [] }, titles: { used: [], ready: [] } }
 
   constructor(
     readonly dir: string,
@@ -78,14 +80,16 @@ export class Store {
     this.readAll('things', this.things)
     this.readAll('wear', this.wear)
     this.readAll('arenas', this.arenas)
-    // Taunts were written as one string each until 2026-11-11, when they became phrases with
-    // tones: those not handed out yet are dropped (Haiku writes more); the used are kept.
-    const lines = this.readJson<Omit<Lines, 'taunts'> & { taunts: LineStock<Phrase[] | string> }>(path.join(dir, 'lines.json'))
+    // Taunts in another style than TAUNT_STYLE are dropped once, ready and handed out alike, so
+    // Haiku is never shown them; the titles stay. Those from before modern English (2026-11-11)
+    // have no style, some not even phrases. Every taunt said is still in the log.
+    const lines = this.readJson<Omit<Lines, 'taunts'> & { taunts: LineStock<Phrase[]> & { style?: string } }>(path.join(dir, 'lines.json'))
     if (lines) {
-      const ready = lines.taunts.ready.filter((l) => typeof l !== 'string')
-      this.lines = { taunts: { used: lines.taunts.used, ready }, titles: lines.titles }
-      if (ready.length < lines.taunts.ready.length) {
-        log(`lines.json: ${lines.taunts.ready.length - ready.length} taunts written as one string each dropped, to be written again as phrases`)
+      const { style, used, ready } = lines.taunts
+      if (style === TAUNT_STYLE) this.lines = { taunts: { style, used, ready }, titles: lines.titles }
+      else {
+        this.lines = { taunts: { style: TAUNT_STYLE, used: [], ready: [] }, titles: lines.titles }
+        log(`lines.json: the taunts were written ${style ? `in the style "${style}"` : 'before modern English'}: ${ready.length} ready and ${used.length} handed out dropped, for Haiku to write anew in the style "${TAUNT_STYLE}"`)
         this.saveLines()
       }
     }

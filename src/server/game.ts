@@ -20,6 +20,7 @@ import {
   READY_WAIT,
   REQUEST_COOLDOWN,
   SLOTS,
+  VOICES,
   type ArenaStatus,
   type ClientMsg,
   type Input,
@@ -33,6 +34,7 @@ import {
   type ServerMsg,
   type Settings,
   type Slot,
+  type VoiceName,
   type WardrobePart,
 } from '../protocol'
 import { recipeOf, thingApi } from '../sim/api'
@@ -42,10 +44,10 @@ import { Bot } from '../sim/bots'
 import { compile } from '../sim/sandbox'
 import { DT, Sim, type Made, type ThingKind } from '../sim/sim'
 import { STARTERS, compileThing, trialThing, type ThingDesign } from '../sim/things'
-import { TO_SONNET, type Designers } from './opus'
+import type { Designers } from './opus'
 import { arenaMessage, linesMessage, thingMessage, wearMessage, type ThingAnswer, type WearAnswer } from './prompts'
 import { Store, lineKey, lineText, type ArenaDesign, type LineStock } from './store'
-import { phrased, type Phrase, type Speech, type Voice } from './voice'
+import { phrased, speakerOf, type Phrase, type Speech, type Voice } from './voice'
 
 /** A socket as the game uses it. */
 export interface Conn {
@@ -72,6 +74,8 @@ interface Player {
   name: string
   title: string
   look: Look
+  /** The voice they chose to lead theirs (null: their own, as their key gives it; always for a bot). */
+  voice: VoiceName | null
   color: string
   bot: Bot | null
   ready: boolean
@@ -101,7 +105,11 @@ interface Player {
 }
 
 interface Taunt {
+  /** The line as written, to be said again in another voice. */
+  line: Phrase[]
   text: string
+  /** The voice it was said in (null: the player's own). */
+  voice: VoiceName | null
   /** Null when there is no voice or it failed (logged): the taunt is only read. */
   speech: Speech | null
 }
@@ -155,28 +163,31 @@ const GENIE = 0.25
  */
 const ASIDE = 1 / 3
 /**
- * Things brought to a defence designed at once in a break: half of what Opus takes at once before
- * the picker turns to a smaller model, the rest left to outfits being made meanwhile.
+ * Things brought to a defence designed at once in a break: half of the four Opus was measured to
+ * take at once no slower than one (2026-11-11), the rest left to outfits being made meanwhile.
  */
-const BRING_AT_ONCE = TO_SONNET / 2
+const BRING_AT_ONCE = 2
 const ARENA_TIMEOUT = 480_000
 /** Seconds an arena is expected to take while fewer than five are kept to measure by. */
 const ARENA_EXPECT = 180
 /** Players gone this long are forgotten (their wins with them). */
 const FORGET_AFTER = 180
 
-/** Taunts the game has of its own, said only when Haiku has none ready; each only once, ever. */
+/**
+ * Taunts the game has of its own, said only when Haiku has none ready; each only once, ever. In
+ * the style Haiku is asked for (LINES_SYSTEM.taunt), split into phrases at their punctuation.
+ */
 const OWN_TAUNTS = [
-  'You smell like a flying duck.',
-  'Your arguments are weak like the bottom of an elder.',
-  'Thy footnotes are lighter than a goose in a fog.',
-  'I have seen sturdier reasoning in a damp almanac.',
-  'Your bibliography was clearly assembled by a startled heron.',
-  'Sir or madam, your hypothesis wears borrowed trousers.',
-  'Your methodology dances like a pickled turnip.',
-  'I would cite you, but my quill refuses.',
-  'Your appendix is longer than your argument and twice as damp.',
-  'Even the library mice have dismissed your thesis.',
+  'Stand back, genius at work!',
+  'Your thesis? I have read longer menus.',
+  'Three doctorates! How dare you push me?',
+  'Bow down, my thesis has a sequel!',
+  'Careful, this brain is insured!',
+  'Your footnotes? Even you skipped them.',
+  'Push me, and I stop citing you!',
+  'Lovely effort! Almost a real argument.',
+  'My bibliography is longer than your thesis!',
+  'Silence! The expert is speaking.',
 ]
 
 export class Game {
@@ -186,6 +197,8 @@ export class Game {
   round = 0
   sim: Sim | null = null
   settings: Settings = { bots: 0, arena: 'academic', wins: null }
+  /** The archive: every thing kept (the starters and the library's), compiled the first time it is drawn into kinds. */
+  private readonly archive = new Map<string, ThingDesign>()
   readonly kinds = new Map<string, ThingKind>()
   readonly wardrobe = new Map<string, WardrobePart>()
   private nextArena: ArenaSource | null = null
@@ -218,13 +231,9 @@ export class Game {
   ) {
     for (const w of STARTER_WEAR) this.addWear({ ...w, ask: '', by: '' })
     for (const w of deps.store.wear.values()) this.addWear(w)
-    for (const d of [...STARTERS, ...deps.store.things.values()]) {
-      try {
-        this.kinds.set(d.id, compileThing(d))
-      } catch (err) {
-        deps.log(`thing ${d.id} would not compile: ${(err as Error).message}`)
-      }
-    }
+    // Compiled when drawn: compiling all 81 kept here held the game's first answer to a page 0.4 s
+    // (measured 2026-11-11).
+    for (const d of [...STARTERS, ...deps.store.things.values()]) this.archive.set(d.id, d)
     this.ownTaunts = OWN_TAUNTS.map((t) => phrased(t, deps.random))
     this.last = deps.clock()
     this.buildNextArena()
@@ -321,9 +330,9 @@ export class Game {
     p.conn = conn
     p.left = 0
     if (profile) this.setProfile(p, profile)
-    this.send(p, { type: 'welcome', you: p.id })
+    this.send(p, { type: 'welcome', you: p.id, ownVoice: speakerOf(p.key, null).own[0][0] })
     this.send(p, { type: 'wardrobe', parts: [...this.wardrobe.values()] })
-    this.send(p, { type: 'profile', profile: { name: p.name, title: p.title, look: p.look } })
+    this.sendProfile(p)
     if (this.sim) {
       this.send(p, { type: 'arena', arena: this.sim.arena!.view })
       this.send(p, { type: 'models', models: Object.fromEntries(this.sim.models) })
@@ -341,6 +350,7 @@ export class Game {
       name: '',
       title: '',
       look: randomLook(this.deps.random, {}),
+      voice: null,
       color,
       bot,
       ready: bot !== null,
@@ -447,15 +457,27 @@ export class Game {
       this.giveTitle(p)
     }
     if (profile.look && typeof profile.look === 'object') p.look = cleanLook(profile.look, (id) => this.wardrobe.get(id)?.slot ?? null)
+    // One of the voices offered, or their own (an unknown one too: a page's hello hears back which).
+    const voice = VOICES.find((v) => v === profile.voice) ?? null
+    if (voice !== p.voice) {
+      p.voice = voice
+      // The taunt said ahead in the voice before is said again in this one, so V lets them hear it.
+      if (p.nextTaunt) p.nextTaunt = p.nextTaunt.then((t) => (t && t.voice !== p.voice ? this.said(p, t.line) : t))
+    }
     if (p.name && !p.nextTaunt) p.nextTaunt = this.prepareTaunt(p)
     this.lobbyDirty = true
+  }
+
+  /** The player's own profile as the server has it, to their page. */
+  private sendProfile(p: Player): void {
+    this.send(p, { type: 'profile', profile: { name: p.name, title: p.title, look: p.look, voice: p.voice } })
   }
 
   private giveTitle(p: Player): void {
     const title = this.takeLine('title', this.deps.store.lines.titles, [])
     if (title) {
       p.title = title
-      this.send(p, { type: 'profile', profile: { name: p.name, title: p.title, look: p.look } })
+      this.sendProfile(p)
       this.lobbyDirty = true
     }
   }
@@ -515,14 +537,19 @@ export class Game {
    */
   private prepareTaunt(p: Player): Promise<Taunt | null> {
     const line = this.takeLine('taunt', this.deps.store.lines.taunts, this.ownTaunts)
-    if (!line) return Promise.resolve(null)
+    return line ? this.said(p, line) : Promise.resolve(null)
+  }
+
+  /** A line said in the player's voice as it is now; only read when there is no voice or it failed. */
+  private said(p: Player, line: Phrase[]): Promise<Taunt> {
     const text = lineText(line)
-    if (!this.deps.voice) return Promise.resolve({ text, speech: null })
-    return this.deps.voice.say(line, p.key).then(
-      (speech) => ({ text, speech }),
+    const voice = p.voice
+    if (!this.deps.voice) return Promise.resolve({ line, text, voice, speech: null })
+    return this.deps.voice.say(line, p.key, voice).then(
+      (speech) => ({ line, text, voice, speech }),
       (err: Error) => {
         if (!this.closed) this.deps.log(`voice: "${text}" was not said: ${err.message}`)
-        return { text, speech: null }
+        return { line, text, voice, speech: null }
       },
     )
   }
@@ -595,7 +622,7 @@ export class Game {
         }
         if (parts.length) this.broadcast({ type: 'wardrobe', parts })
         p.look = cleanLook(look, (id) => this.wardrobe.get(id)?.slot ?? null)
-        this.send(p, { type: 'profile', profile: { name: p.name, title: p.title, look: p.look } })
+        this.sendProfile(p)
         this.deps.store.append({ kind: 'wear', by: p.name, ask: text, model: a.model, ms: Math.round((this.now() - t0) * 1000), parts: parts.map((x) => x.id), problems })
         this.note(p, problems.length ? `${a.data.name}: some of it would not build.` : `${a.data.name}.`)
         return
@@ -682,9 +709,25 @@ export class Game {
     if (p) this.note(p, `It failed its trial and went back to be fixed: ${FIX_GRACE} s more.`)
   }
 
+  /** A thing from the archive, at random: one that will not compile is logged and left out of it. */
   private fallbackKind(): ThingKind {
-    const all = [...this.kinds.values()]
-    return all[Math.floor(this.deps.random() * all.length)]!
+    for (;;) {
+      const ids = [...this.archive.keys()]
+      if (!ids.length) throw new Error('nothing in the archive compiles')
+      const id = ids[Math.floor(this.deps.random() * ids.length)]!
+      let kind = this.kinds.get(id)
+      if (!kind) {
+        try {
+          kind = compileThing(this.archive.get(id)!)
+        } catch (err) {
+          this.deps.log(`thing ${id} would not compile: ${(err as Error).message}`)
+          this.archive.delete(id)
+          continue
+        }
+        this.kinds.set(id, kind)
+      }
+      return kind
+    }
   }
 
   /**
@@ -696,7 +739,7 @@ export class Game {
   private async designThing(req: { ask: string | null; by: string; curse: string | null; genie: boolean; aside: boolean }, deadline: () => number | null, onFix: () => void): Promise<ThingKind> {
     const designers = this.deps.designers!
     const { ask, by, curse, genie, aside } = req
-    const avoid = ask === null ? [...this.kinds.values()].map((k) => k.name) : []
+    const avoid = ask === null ? [...this.archive.values()].map((d) => d.name) : []
     const t0 = this.now()
     let fix: { answer: ThingAnswer; problems: string[] } | null = null
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -730,6 +773,7 @@ export class Game {
       this.deps.store.append({ kind: 'thing', by, ask, curse, genie, aside, model: a.model, ms: design.ms, id, name: design.name, problems, ...(problems.length ? { look: design.look, code: design.code } : {}) })
       if (problems.length === 0 && kind) {
         this.deps.store.saveThing(design)
+        this.archive.set(id, design)
         this.kinds.set(id, kind)
         return kind
       }

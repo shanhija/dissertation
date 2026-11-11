@@ -9,7 +9,7 @@ const DIR = fileURLToPath(new URL('../../node_modules/.cache/voice', import.meta
 describe('the voice worker', () => {
   it('says lines one at a time in the order asked, a line of two phrases before a line of one asked after it (needs what npm install fetched)', async () => {
     const kokoro = new Kokoro(DIR, () => {})
-    const s = speakerOf('browser-key-order')
+    const s = speakerOf('browser-key-order', null)
     const back: string[] = []
     const ask = (name: string, phrases: Phrase[]) => kokoro.render(recipe(phrases, s, () => 0.5)).then(() => back.push(name))
     await Promise.all([

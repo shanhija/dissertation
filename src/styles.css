@@ -614,7 +614,8 @@ kbd {
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.field select {
   width: 100%;
 }
 
@@ -920,7 +921,8 @@ kbd {
 }
 
 /* What becomes of what one brings to one's defence. */
-.bring-state {
+.bring-state,
+.voice-hint {
   color: var(--ink-2);
 }
 

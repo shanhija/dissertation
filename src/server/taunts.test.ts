@@ -4,7 +4,9 @@ import path from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { initPhysics } from '../sim/sim'
-import { flush, setup, tempDir } from './fakes'
+import { FakeDesigners, flush, setup, tempDir } from './fakes'
+import { Game } from './game'
+import { linesMessage, TAUNT_STYLE } from './prompts'
 import { Store } from './store'
 import type { Phrase, Speech, Voice } from './voice'
 
@@ -63,22 +65,35 @@ describe('taunts', () => {
     for (const [a, b] of two) expect(a!.tone).not.toBe(b!.tone)
   })
 
-  it('lines.json from before phrases: the taunts not handed out are dropped, the used kept', () => {
+  it('taunts in lines.json in another style are dropped once, ready and handed out alike, and never listed to Haiku; the titles stay', async () => {
     const dir = tempDir()
-    const old = { taunts: { used: ['Thy footnotes are damp, sirrah!'], ready: ['Thy index is a ladder.', 'Begone, thou quarto!'] }, titles: { used: ['On Ducks'], ready: ['On Geese'] } }
+    // As the library was before modern English: no style, and a taunt from before phrases still one string.
+    const old = {
+      taunts: {
+        used: ['Thy footnotes are damp, sirrah!', 'Begone, thou quarto!'],
+        ready: [[{ text: 'Mind the dean, sirrah,', tone: 'hushed' }, { text: 'thy theorem is damp.', tone: 'booming' }], 'Thy index is a ladder.'],
+      },
+      titles: { used: ['On Ducks'], ready: ['On Geese'] },
+    }
     fs.writeFileSync(path.join(dir, 'lines.json'), JSON.stringify(old))
     const logs: string[] = []
     const store = new Store(dir, (m) => logs.push(m))
-    expect(store.lines.taunts).toEqual({ used: old.taunts.used, ready: [] })
-    expect(store.lines.titles).toEqual(old.titles)
-    expect(logs.join('\n')).toMatch(/2 taunts/)
-    expect(JSON.parse(fs.readFileSync(path.join(dir, 'lines.json'), 'utf8'))).toEqual({ ...old, taunts: { used: old.taunts.used, ready: [] } })
-    // Once moved on, nothing more is dropped.
-    const line: Phrase[] = [{ text: 'Sirrah!', tone: 'indignant' }]
-    store.lines.taunts.ready.push(line)
-    store.saveLines()
+    const fresh = { taunts: { style: TAUNT_STYLE, used: [], ready: [] }, titles: old.titles }
+    expect(store.lines).toEqual(fresh)
+    expect(logs.join('\n')).toMatch(/2 ready and 2 handed out dropped/)
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'lines.json'), 'utf8'))).toEqual(fresh)
+    // The game's first batch is asked for with nothing listed.
+    const designers = new FakeDesigners()
+    const game = new Game({ designers, voice: null, store, log: () => {}, join: [], random: Math.random, clock: () => 0 }, false)
+    await designers.settled()
+    game.close()
+    expect(designers.asked.filter((a) => a.kind === 'taunt').map((a) => a.message)).toEqual([linesMessage(12, [])])
+    expect(store.lines.taunts.ready).toHaveLength(12)
+    // In the style of now, a second load changes nothing.
+    const saved = fs.readFileSync(path.join(dir, 'lines.json'), 'utf8')
     const again: string[] = []
-    expect(new Store(dir, (m) => again.push(m)).lines.taunts.ready).toEqual([line])
+    expect(new Store(dir, (m) => again.push(m)).lines).toEqual(store.lines)
     expect(again).toEqual([])
+    expect(fs.readFileSync(path.join(dir, 'lines.json'), 'utf8')).toBe(saved)
   })
 })

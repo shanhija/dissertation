@@ -2,12 +2,12 @@
  * The page's side of the WebSocket: it says hello with this browser's key and profile, keeps
  * what the server sends (the lobby, the arena, the models, the wardrobe, the last snapshots),
  * hands snapshot events to whoever listens, and reconnects when the socket drops (a new game
- * after the server's code changed, or the host's computer waking up). The profile (name, title, look)
- * lives in this browser's localStorage and goes with every hello.
+ * after the server's code changed, or the host's computer waking up). The profile (name, title, look,
+ * voice) lives in this browser's localStorage and goes with every hello.
  */
 
 import { randomLook } from './doctor'
-import { WS_PATH, type ArenaView, type ClientMsg, type GameEvent, type Input, type Lobby, type Me, type Profile, type Recipe, type ServerMsg, type Snap, type Vec3, type WardrobePart } from './protocol'
+import { WS_PATH, type ArenaView, type ClientMsg, type GameEvent, type Input, type Lobby, type Me, type Profile, type Recipe, type ServerMsg, type Snap, type Vec3, type VoiceName, type WardrobePart } from './protocol'
 
 const KEY = 'dissertation-key'
 const PROFILE = 'dissertation-profile'
@@ -47,6 +47,8 @@ export interface Received {
 
 export class Net {
   you: string | null = null
+  /** The voice that leads this player's own, as the server tells it on welcome. */
+  ownVoice: VoiceName | null = null
   lobby: Lobby | null = null
   arena: ArenaView | null = null
   readonly models = new Map<string, Recipe>()
@@ -74,7 +76,7 @@ export class Net {
       store(KEY, key)
     }
     this.key = key
-    this.profile = stored<Profile>(PROFILE) ?? { name: '', title: '', look: randomLook(Math.random, { hair: 'wild-white-hair' }) }
+    this.profile = stored<Profile>(PROFILE) ?? { name: '', title: '', look: randomLook(Math.random, { hair: 'wild-white-hair' }), voice: null }
     this.open()
   }
 
@@ -102,6 +104,7 @@ export class Net {
     switch (msg.type) {
       case 'welcome':
         this.you = msg.you
+        this.ownVoice = msg.ownVoice
         break
       case 'lobby':
         this.lobby = msg.lobby

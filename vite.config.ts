@@ -22,6 +22,10 @@ export default defineConfig({
     strictPort: true,
     // The game saves what it makes in library/: saving must not reload the page.
     watch: { ignored: ['**/library/**'] },
+    // The page's modules are made as the server starts: after a start, the first page waited 1.2 s
+    // for its 63 modules, made one by one as the browser came to them (0.7 s made ahead; measured
+    // 2026-11-11).
+    warmup: { clientFiles: ['./src/main.tsx'] },
   },
   test: { environment: 'node', include: ['src/**/*.test.ts'] },
 })

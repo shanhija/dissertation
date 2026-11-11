@@ -10,7 +10,7 @@ import path from 'node:path'
 
 import { afterEach } from 'vitest'
 
-import type { ClientMsg, Profile, ServerMsg } from '../protocol'
+import type { ClientMsg, Profile, ServerMsg, VoiceName } from '../protocol'
 import { STARTERS } from '../sim/things'
 import { Game, type Conn } from './game'
 import type { Answered, Designers, ModelName } from './opus'
@@ -75,7 +75,8 @@ export class FakeDesigners implements Designers {
     this.asked.push({ kind: 'arena', message, crateMs: null })
     return this.wait({ name: `Test Hall ${++this.n}`, code: ARENA_CODE })
   }
-  async taunts(): Promise<Phrase[][]> {
+  async taunts(message: string): Promise<Phrase[][]> {
+    this.asked.push({ kind: 'taunt', message, crateMs: null })
     return Array.from({ length: 12 }, () => [
       { text: `taunt number ${++this.n},`, tone: 'plain' },
       { text: 'most silly', tone: 'booming' },
@@ -90,17 +91,20 @@ export class FakeDesigners implements Designers {
   close(): void {}
 }
 
-/** A voice that says a line at once as "<key>: <line>", holds them while `hold` is set until `release()`, or fails while `fail` is. */
+/**
+ * A voice that says a line at once as "<key>: <line>" (in a chosen voice "<key> as <voice>: <line>"),
+ * holds them while `hold` is set until `release()`, or fails while `fail` is.
+ */
 export class FakeVoice implements Voice {
-  said: { text: string; key: string }[] = []
+  said: { text: string; key: string; voice: VoiceName | null }[] = []
   hold = false
   fail = false
   private held: (() => void)[] = []
-  say(phrases: Phrase[], key: string): Promise<Speech> {
+  say(phrases: Phrase[], key: string, voice: VoiceName | null): Promise<Speech> {
     const text = phrases.map((p) => p.text).join(' ')
-    this.said.push({ text, key })
+    this.said.push({ text, key, voice })
     if (this.fail) return Promise.reject(new Error('the voice is hoarse'))
-    const speech: Speech = { mp3: Buffer.from(`${key}: ${text}`).toString('base64'), tones: phrases.map((p) => p.tone), secs: 2, ms: 1 }
+    const speech: Speech = { mp3: Buffer.from(`${key}${voice ? ` as ${voice}` : ''}: ${text}`).toString('base64'), tones: phrases.map((p) => p.tone), secs: 2, ms: 1 }
     if (!this.hold) return Promise.resolve(speech)
     return new Promise((resolve) => this.held.push(() => resolve(speech)))
   }
@@ -154,7 +158,7 @@ export function setup(designers: Designers | null = new FakeDesigners(), voice: 
     const conn = new FakeConn()
     const h = game.connect(conn)
     const send = (m: ClientMsg) => h.message(JSON.stringify(m))
-    const profile: Profile | null = name ? { name, title: 'On Ducks', look: { height: 1.8, build: 1, skin: '#e8b892', eyes: '#333333', coat: '#ffffff', shirt: '#334455', trousers: '#222222', shoes: '#111111', gait: 'steady', worn: {} } } : null
+    const profile: Profile | null = name ? { name, title: 'On Ducks', look: { height: 1.8, build: 1, skin: '#e8b892', eyes: '#333333', coat: '#ffffff', shirt: '#334455', trousers: '#222222', shoes: '#111111', gait: 'steady', worn: {} }, voice: null } : null
     send({ type: 'hello', key: `key-${name || 'nameless'}-123456`, profile })
     return { conn, send, close: h.close }
   }

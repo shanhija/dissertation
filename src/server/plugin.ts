@@ -3,8 +3,9 @@
  * game on this computer meets the players' browsers. Only the local network may connect
  * ("only local ip's are ok for now"), to the socket and to the page alike. This file is
  * all vite.config.ts loads and it imports nothing of the game: the game (main.ts) comes in
- * through Vite's module runner on the first visit, and again after its code changes, when the
- * old game closes (its sockets with it; the pages reconnect to the new one).
+ * through Vite's module runner as the server starts listening, and again on the first visit after
+ * its code changes, when the old game closes (its sockets with it; the pages reconnect to the new
+ * one).
  */
 
 import type { IncomingMessage } from 'node:http'
@@ -80,9 +81,14 @@ export function dissertation(): Plugin {
           res.end('Dissertation is played on the local network only.')
           return
         }
-        // The first visit wakes the game, so the first arena is being built while the page loads.
+        // A visit after the game's code changed starts the new game while the page loads.
         gameNow().catch((err: Error) => log(`the game did not load: ${err.message}`))
         next()
+      })
+      // The game loads as the server starts, not on the first visit: a page that came first waited
+      // for it, 2 s from its first request on a busy host (measured 2026-11-11).
+      server.httpServer?.once('listening', () => {
+        gameNow().catch((err: Error) => log(`the game did not load: ${err.message}`))
       })
 
       const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 })

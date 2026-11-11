@@ -3,36 +3,69 @@ import { fileURLToPath } from 'node:url'
 import { MPEGDecoder } from 'mpg123-decoder'
 import { describe, expect, it } from 'vitest'
 
-import { delivered, MEN, phrased, recipe, speakerOf, TONE_NAMES, voiceFromDisk, WOMEN, type Sex, type Speaker, type Tone } from './voice'
+import { VOICES } from '../protocol'
+import { delivered, phrased, recipe, sexOf, speakerOf, TONE_NAMES, voiceFromDisk, type Speaker, type Tone } from './voice'
 
 const DIR = fileURLToPath(new URL('../../node_modules/.cache/voice', import.meta.url))
 const KEYS = Array.from({ length: 24 }, (_, i) => `browser-key-${i}-a1b2c3`)
-const voicesOf = (sex: Sex): readonly string[] => (sex === 'man' ? MEN : WOMEN)
+/** A key's own voice. */
+const own = (key: string) => speakerOf(key, null)
 /** One phrase said in a tone, as the worker is asked it. */
 const said = (s: Speaker, tone: Tone) => recipe([{ text: 'Sirrah!', tone }], s, () => 0.5).phrases[0]!
 
 describe('the voice', () => {
   it('gives every key an old English doctor of their own, man or woman, the same every time', () => {
-    expect(KEYS.map(speakerOf)).toEqual(KEYS.map(speakerOf))
-    expect(new Set(KEYS.map((k) => JSON.stringify(speakerOf(k).own))).size).toBe(KEYS.length)
-    expect(new Set(KEYS.map((k) => speakerOf(k).sex))).toEqual(new Set(['man', 'woman']))
-    expect(new Set(KEYS.map((k) => speakerOf(k).own[0]![0])).size).toBeGreaterThan(5)
+    expect(KEYS.map(own)).toEqual(KEYS.map(own))
+    expect(new Set(KEYS.map((k) => JSON.stringify(own(k).own))).size).toBe(KEYS.length)
+    expect(new Set(KEYS.map((k) => own(k).sex))).toEqual(new Set(['man', 'woman']))
+    expect(new Set(KEYS.map((k) => own(k).own[0][0])).size).toBeGreaterThan(5)
     for (const k of KEYS) {
-      const s = speakerOf(k)
-      expect(s.own[0]![0]).toMatch(/^b[mf]_/)
+      const s = own(k)
+      expect(s.own[0][0]).toMatch(/^b[mf]_/)
       for (const [v] of s.own) {
-        expect(voicesOf(s.sex)).toContain(v)
-        expect(v).not.toBe('af_nicole')
+        expect(VOICES).toContain(v)
+        expect(sexOf(v)).toBe(s.sex)
       }
       // Slower and deeper than Kokoro speaks, and never read faster than it was made.
       expect(s.pace).toBeLessThan(1)
-      expect(s.age.deepen * (1 + s.age.depth)).toBeLessThan(1)
+      expect(s.deepen).toBeLessThan(1)
     }
   })
 
-  it('a tone moves only the prosody, toward voices of the doctor’s own sex (but Nicole’s hush), and widens the melody', () => {
-    const man = speakerOf(KEYS.find((k) => speakerOf(k).sex === 'man')!)
-    const woman = speakerOf(KEYS.find((k) => speakerOf(k).sex === 'woman')!)
+  it('keeps every key’s voice as it was before the melody’s widening and the tremble were taken out (2026-11-11)', () => {
+    expect(own('browser-key-0-a1b2c3')).toEqual({ sex: 'man', own: [['bm_daniel', 0.7036359227029607], ['bm_george', 0.29636407729703934]], pace: 0.908543045995757, deepen: 0.9202833472704515, temper: 'sniffy' })
+    expect(own('browser-key-5-a1b2c3')).toEqual({ sex: 'man', own: [['bm_lewis', 0.6771139172022231], ['am_onyx', 0.3228860827977769]], pace: 0.9219616832816974, deepen: 0.9273052815068513, temper: 'sniffy' })
+    expect(own('browser-key-test')).toEqual({ sex: 'woman', own: [['bf_lily', 0.6851383031578735], ['af_sarah', 0.31486169684212656]], pace: 0.8681661014119163, deepen: 0.9228143689711579, temper: 'gloating' })
+    expect(own('key-Alice-123456')).toEqual({ sex: 'man', own: [['bm_daniel', 0.6405272266827524], ['am_eric', 0.35947277331724764]], pace: 0.9098324599582702, deepen: 0.8882287051598542, temper: 'gloating' })
+    expect(own('0f3a9c27b1d4e8a6f5c2b913')).toEqual({ sex: 'woman', own: [['bf_isabella', 0.7705016029183753], ['af_aoede', 0.22949839708162473]], pace: 0.8773808775143698, deepen: 0.9144040420558304, temper: 'booming' })
+  })
+
+  it('leads with the voice a player chose and takes its sex, the rest still from the key', () => {
+    for (const k of KEYS) {
+      const o = own(k)
+      // Their own lead, chosen by name, is their own voice.
+      expect(speakerOf(k, o.own[0][0])).toEqual(o)
+      for (const v of VOICES) {
+        const s = speakerOf(k, v)
+        expect(s.own[0][0]).toBe(v)
+        expect(s.sex).toBe(sexOf(v))
+        expect(s.own[1][0]).not.toBe(v)
+        expect(sexOf(s.own[1][0])).toBe(s.sex)
+        expect(s.own.map(([, w]) => w)).toEqual(o.own.map(([, w]) => w))
+        expect(s.pace).toBe(o.pace)
+        expect(s.temper).toBe(o.temper)
+        // Aged by the key's own draw, a woman's voice deepened less than a man's.
+        expect(s.deepen - (s.sex === 'man' ? 0.88 : 0.91)).toBeCloseTo(o.deepen - (o.sex === 'man' ? 0.88 : 0.91))
+      }
+    }
+    // A key that drew a woman, with Onyx chosen: the tones pull toward men.
+    const s = speakerOf(KEYS.find((k) => own(k).sex === 'woman')!, 'am_onyx')
+    for (const [v] of said(s, 'booming').prosody) expect(sexOf(v)).toBe('man')
+  })
+
+  it('a tone moves only the prosody, toward voices of the doctor’s own sex (but Nicole’s hush)', () => {
+    const man = own(KEYS.find((k) => own(k).sex === 'man')!)
+    const woman = own(KEYS.find((k) => own(k).sex === 'woman')!)
     const weigh = (mix: [string, number][], ...names: string[]) => mix.filter(([v]) => names.includes(v)).reduce((a, [, w]) => a + w, 0)
     expect(said(man, 'plain').prosody).toEqual(man.own)
     // What a tone pulls toward: 0.6 of the prosody, besides what the doctor's own mix already had of those voices.
@@ -45,18 +78,17 @@ describe('the voice', () => {
       for (const tone of TONE_NAMES) {
         const r = recipe([{ text: 'Sirrah!', tone }], s, () => 0.5)
         expect(r.timbre).toEqual(s.own)
-        expect(r.age).toEqual(s.age)
+        expect(r.deepen).toBe(s.deepen)
         const p = r.phrases[0]!
-        expect(p.swing).toBeGreaterThan(1)
         expect(p.pause).toBe(0)
-        for (const [v] of p.prosody) if (v !== 'af_nicole') expect(voicesOf(s.sex)).toContain(v)
+        for (const [v] of p.prosody) expect(v === 'af_nicole' || sexOf(v) === s.sex).toBe(true)
         expect(p.prosody.reduce((a, [, w]) => a + w, 0)).toBeCloseTo(1)
       }
     }
   })
 
   it('says a line phrase by phrase, each in its tone, with a pause between them, and the temper shows in the first two times in five', () => {
-    const s = speakerOf(KEYS[0]!)
+    const s = own(KEYS[0]!)
     const r = recipe(
       [
         { text: 'Sirrah!', tone: 'indignant' },
@@ -108,6 +140,7 @@ describe('the voice', () => {
         { text: 'An embarrassment to the guild.', tone: 'booming' },
       ],
       'browser-key-test',
+      null,
     )
     clearInterval(tick)
     // The model holds its own thread for seconds; this one never waited long.
@@ -150,7 +183,7 @@ describe('the voice', () => {
     for (let f = first, run = 0; f <= end; f++) longest = Math.max(longest, (run = sound[f] ? 0 : run + 1))
     expect(longest / 100).toBeGreaterThanOrEqual(0.15)
     // Closed, what is still waiting fails at once.
-    const pending = voice!.say([{ text: 'Never to be heard.', tone: 'plain' }], 'browser-key-test')
+    const pending = voice!.say([{ text: 'Never to be heard.', tone: 'plain' }], 'browser-key-test', 'bm_george')
     voice!.close()
     await expect(pending).rejects.toThrow(/closed/)
   }, 60_000)

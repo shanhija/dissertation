@@ -6,9 +6,10 @@
  * to turn it), over a brass plaque with their name. The left page is the committee (who is here
  * and ready, the next arena, what was said, the chair's settings, where friends join); the right
  * page the dossier (the name, needed; the thesis, which the committee writes when it is left
- * empty; what they bring to their defence, made once they are Ready; a line to say how the doctor
- * looks, which Opus makes; height, build, walk and colours; the wardrobe of every part anyone has
- * had made). Along the foot: when the round starts, the wins the match needs, Taunt and Ready.
+ * empty; the voice, their own or one of Kokoro's by name; what they bring to their defence, made
+ * once they are Ready; a line to say how the doctor looks, which Opus makes; height, build, walk
+ * and colours; the wardrobe of every part anyone has had made). Along the foot: when the round
+ * starts, the wins the match needs, Taunt and Ready.
  */
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
@@ -17,9 +18,9 @@ import { BoxGeometry, Color, CylinderGeometry, Euler, Matrix4, Mesh, PMREMGenera
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 
 import type { Net } from './net'
-import { BUDGET_WINDOW, CRATE_OWNER_ONLY, FISTS_BUDGET, GAITS, MATCH_WINS, SLOTS, type Gait, type Lobby, type Look, type PlayerInfo, type Profile, type Slot } from './protocol'
+import { BUDGET_WINDOW, CRATE_OWNER_ONLY, FISTS_BUDGET, GAITS, MATCH_WINS, SLOTS, VOICES, type Gait, type Lobby, type Look, type PlayerInfo, type Profile, type Slot, type VoiceName } from './protocol'
 import { DoctorMesh } from './scene/doctor'
-import { prepared, surface, warmSurfaces } from './scene/materials'
+import { prepared, surface } from './scene/materials'
 import { setEngraving } from './scene/paint'
 import { lighting } from './lighting'
 import { openOptions } from './options'
@@ -45,6 +46,12 @@ const SLOT_NAMES: Record<Slot, string> = {
   back: 'On the back',
   feet: 'On the feet',
 }
+/** A voice as the dossier names it, from Kokoro's name for it (bm_george): George, a British man. */
+const voiceName = (v: VoiceName) => `${v[3]!.toUpperCase()}${v.slice(4)}, ${v[0] === 'b' ? 'a British' : 'an American'} ${v[1] === 'm' ? 'man' : 'woman'}`
+/** The voices in the order the dossier offers them: British before American, men before women, then by name. */
+const voiceOrder = (v: VoiceName) => `${v[0] === 'b' ? 0 : 1}${v[1] === 'm' ? 0 : 1}${v.slice(3)}`
+const VOICE_LIST = [...VOICES].sort((a, b) => voiceOrder(a).localeCompare(voiceOrder(b)))
+
 /** What becomes of what one brings to one's defence, as the dossier says it. */
 const BRINGING: Record<PlayerInfo['bringing'], string> = {
   none: 'Made once you are Ready, it waits in a crate beside you as the round begins.',
@@ -199,8 +206,6 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
 
   // The server may change the profile (a title written, a look made): take it in.
   useEffect(() => net.subscribe(() => setProfileState(net.profile)), [net])
-  // The arena's surfaces are painted while everyone dresses, so the round starts without a stall.
-  useEffect(() => warmSurfaces(), [])
   useEffect(
     () =>
       net.onTaunt((t) => {
@@ -493,6 +498,20 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
             <span className="label">Thesis</span>
             <input value={profile.title} maxLength={160} placeholder="Leave it empty and the committee writes one" onChange={(e) => update({ ...profile, title: e.target.value })} onBlur={() => net.setProfile(profile)} />
           </label>
+          <label className="field">
+            <span className="label">Voice</span>
+            <select value={profile.voice ?? ''} onChange={(e) => update({ ...profile, voice: VOICES.find((v) => v === e.target.value) ?? null }, true)}>
+              <option value="">{net.ownVoice ? `Your own: ${voiceName(net.ownVoice)}` : 'Your own'}</option>
+              {VOICE_LIST.map((v) => (
+                <option key={v} value={v}>
+                  {voiceName(v)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="note-inline voice-hint">
+            Press <kbd>V</kbd> to hear it. Everyone hears it too.
+          </div>
           <label className="field">
             <span className="label">What will you bring to your defence?</span>
             <input value={bring} maxLength={400} disabled={bringing !== 'none' && bringing !== 'queued'} placeholder="A thing, in your own words; leave it empty for a surprise" onChange={(e) => writeBring(e.target.value)} />

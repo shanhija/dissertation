@@ -202,7 +202,7 @@ describe('the game', () => {
     expect(store.lines.taunts.used).toEqual(expect.arrayContaining(said))
     for (const m of a.conn.got) if (m.type === 'taunt') expect(heardAs(m.voice)).toBe(`key-Alice-123456: ${m.text}`)
     const b = join('Bob')
-    b.send({ type: 'profile', profile: { name: 'Bob', title: '', look: a.conn.last('profile')!.profile.look } })
+    b.send({ type: 'profile', profile: { name: 'Bob', title: '', look: a.conn.last('profile')!.profile.look, voice: null } })
     await flush()
     expect(b.conn.last('profile')!.profile.title).toMatch(/title number/)
   })

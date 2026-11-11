@@ -1,10 +1,9 @@
 /**
  * The models, through the Claude Code CLI (claude.ts):
  * one process per answer, no tools, an empty folder, structured output. Things and looks go to
- * Opus while it keeps up; when more designs are in flight at once than Opus was measured to keep
- * up with, or Opus has failed, or missed its crates twice running, the next ones go to Sonnet,
- * then Haiku ("if the game sees it's becoming congested, then switch to sonnet or haiku
- * online"). Arenas always go to Opus; taunts and thesis titles to Haiku.
+ * Opus however many are in flight at once (2026-11-11: "have all go to opus"); when Opus has
+ * failed, or missed its crates twice running, the next ones go to Sonnet, then Haiku. Arenas
+ * always go to Opus; taunts and thesis titles to Haiku.
  */
 
 import os from 'node:os'
@@ -16,13 +15,6 @@ import type { Phrase } from './voice'
 
 export type ModelName = 'opus' | 'sonnet' | 'haiku'
 const LEVELS: ModelName[] = ['opus', 'sonnet', 'haiku']
-/**
- * Designs in flight from which the next goes to Sonnet, and from which to Haiku. Measured on
- * 2026-11-11 (Opus, the thing prompt): with 1, 2 and 4 designs at once Opus took a median 25,
- * 21 and 25 s, so four at once are no slower than one; more were not measured.
- */
-export const TO_SONNET = 4
-const TO_HAIKU = 6
 /** A design answered less than this before its crate falls back to the archive missed it (the trial and filling it take the rest). */
 const MARGIN_MS = 2000
 /** How long a model that failed, or missed its crates twice running, is passed over. */
@@ -52,9 +44,8 @@ export interface Designers {
   close(): void
 }
 
-/** Chooses the model for the next design by how busy they are and how they have kept up. */
+/** Chooses the model for the next design by how the models have kept up: Opus unless it is passed over. */
 export class Picker {
-  inFlight = 0
   private readonly slowUntil: Record<ModelName, number> = { opus: 0, sonnet: 0, haiku: 0 }
   /** Each model's thing designs in a row, up to now, that missed their crates. */
   private readonly missed: Record<ModelName, number> = { opus: 0, sonnet: 0, haiku: 0 }
@@ -62,7 +53,7 @@ export class Picker {
   constructor(private readonly now: () => number) {}
 
   pick(): ModelName {
-    let level = this.inFlight >= TO_HAIKU ? 2 : this.inFlight >= TO_SONNET ? 1 : 0
+    let level = 0
     while (level < 2 && this.slowUntil[LEVELS[level]!] > this.now()) level++
     return LEVELS[level]!
   }
@@ -96,10 +87,9 @@ export class CliDesigners implements Designers {
     return { data: answer.data as T, model, ms: answer.ms }
   }
 
-  /** A design through the picker: in-flight counted, a late or failed model marked, late by the whole wait (a second try included). */
+  /** A design through the picker: a late or failed model marked, late by the whole wait (a second try included). */
   private async design<T>(crateMs: number | null, system: string, schema: Schema, message: string, timeoutMs: number): Promise<Answered<T>> {
     const model = this.picker.pick()
-    this.picker.inFlight++
     const t0 = Date.now()
     try {
       const a = await this.ask<T>(model, system, schema, message, timeoutMs)
@@ -109,8 +99,6 @@ export class CliDesigners implements Designers {
       this.picker.done(model, crateMs, Date.now() - t0, true)
       this.log(`${model} failed: ${(err as Error).message}`)
       throw err
-    } finally {
-      this.picker.inFlight--
     }
   }
 
