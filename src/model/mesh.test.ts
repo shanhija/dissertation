@@ -143,3 +143,62 @@ describe('a recipe as three.js', () => {
     }
   })
 })
+
+describe('a part worn by a doctor', () => {
+  const worn = (build: (m: Kit) => void) => buildModel(buildRecipe(build).recipe, 'worn').parts.get(null)!.solid!
+  const points = (g: BufferGeometry) => {
+    const pos = g.getAttribute('position')
+    return Array.from({ length: pos.count }, (_, i) => new Vector3().fromBufferAttribute(pos, i))
+  }
+  const bounds = (g: BufferGeometry) => new Box3().setFromBufferAttribute(g.getAttribute('position') as never)
+
+  it('is drawn finer than a thing: half again the sides round each way', () => {
+    const drawn = buildModel(buildRecipe((m) => m.sphere(0.1)).recipe, 'drawn').parts.get(null)!.solid!
+    expect(triangles(worn((m) => m.sphere(0.1)))).toBeGreaterThanOrEqual(2.25 * triangles(drawn))
+  })
+
+  it('rounds off a box: no corner left, its faces where they were', () => {
+    const g = worn((m) => m.box(0.3, 0.2, 0.1))
+    const box = bounds(g)
+    expect(box.min.toArray().map((v) => +v.toFixed(6))).toEqual([-0.15, -0.1, -0.05])
+    expect(box.max.toArray().map((v) => +v.toFixed(6))).toEqual([0.15, 0.1, 0.05])
+    const corner = new Vector3(0.15, 0.1, 0.05)
+    expect(Math.min(...points(g).map((p) => p.distanceTo(corner)))).toBeGreaterThan(0.01)
+  })
+
+  it("caps a cone's point round, a little shorter, and rounds its rim", () => {
+    const g = worn((m) => m.cone(0.04, 0.16))
+    const box = bounds(g)
+    expect(box.max.y).toBeLessThan(0.08 - 0.005)
+    expect(box.max.y).toBeGreaterThan(0.08 - 0.16 * 0.15)
+    expect(box.min.y).toBeCloseTo(-0.08, 6)
+    expect(box.max.x).toBeLessThanOrEqual(0.04)
+    expect(box.max.x).toBeGreaterThan(0.035)
+    const rim = new Vector3(0.04, -0.08, 0)
+    expect(Math.min(...points(g).map((p) => p.distanceTo(rim)))).toBeGreaterThan(0.002)
+    // A closed solid: every face toward the outside.
+    const { faces, out } = facing(g, (c) => c.clone().sub(new Vector3(0, -0.04, 0)))
+    expect(out).toBe(faces)
+  })
+
+  it('bevels an outline made thick within its own outline and thickness', () => {
+    const g = worn((m) => m.extrude([[0, 0], [0.3, 0], [0.3, 0.2], [0, 0.2]], 0.04))
+    const box = bounds(g)
+    expect(box.min.z).toBeCloseTo(-0.02, 6)
+    expect(box.max.z).toBeCloseTo(0.02, 6)
+    for (const k of [0, 1] as const) {
+      expect(box.min.getComponent(k)).toBeGreaterThanOrEqual(-1e-6)
+      expect(box.max.getComponent(k)).toBeLessThanOrEqual([0.3, 0.2][k]! + 1e-6)
+    }
+    expect(Math.min(...points(g).map((p) => p.distanceTo(new Vector3(0.3, 0.2, 0.02))))).toBeGreaterThan(0.005)
+  })
+
+  it('keeps a smooth curve as written and rounds only its corners', () => {
+    // A hat: a crown and a brim meeting at a corner, and a round top written in many points.
+    const top = Array.from({ length: 9 }, (_, i) => [0.1 * Math.cos((i / 8) * (Math.PI / 2)), 0.2 + 0.1 * Math.sin((i / 8) * (Math.PI / 2))])
+    const g = worn((m) => m.lathe([[0.2, 0], [0.1, 0], ...top]))
+    const corner = new Vector3(0.1, 0, 0)
+    expect(Math.min(...points(g).map((p) => p.distanceTo(corner)))).toBeGreaterThan(0.003)
+    expect(bounds(g).max.y).toBeCloseTo(0.3, 6)
+  })
+})

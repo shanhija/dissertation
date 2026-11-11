@@ -5,7 +5,8 @@ import { BODY } from '../doctor'
 import { buildArena } from '../sim/arena'
 import { LECTURE_HALL } from '../sim/hall'
 import { Sim, initPhysics } from '../sim/sim'
-import { JOINTS, applyRag, reach, type DoctorMesh } from './doctor'
+import { applyRag, reach, type DoctorMesh } from './doctor'
+import { JOINTS } from './figure'
 
 /** The end of a two-part limb posed as reach says, from a shoulder at s. */
 function endOf(s: Vector3, pose: ReturnType<typeof reach>, a: number, b: number): { elbow: Vector3; end: Vector3 } {

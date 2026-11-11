@@ -25,9 +25,9 @@ When the user tells you to do something **differently** than you did, or points 
 | File | Scope |
 |------|--------|
 | `.cursor/rules/coding-style.md` | Languages, libraries, formatting, repo commands, style constraints |
-| `.cursor/rules/plans.md` | Where plan files live and how they evolve |
+| `.cursor/rules/plans.md` | The one design document (`design.md`) and how it evolves |
 
-Add further rule files (e.g. `design.md`) only when a distinct concern accumulates durable conventions.
+Add further rule files (e.g. `testing.md`) only when a distinct concern accumulates durable conventions.
 
 **Rules vs `docs/`**: Files under `.cursor/rules/` hold **principles and constraints** only. Put **specifics** (long examples, exhaustive shapes, step-by-step migration, rationale essays) in `docs/` and link from rules. Do not let rules grow into tutorials.
 

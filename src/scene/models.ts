@@ -8,7 +8,7 @@
 import { Color, Euler, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, type Material } from 'three'
 
 import type { PartDef } from '../model/kit'
-import { buildModel, type Model } from '../model/mesh'
+import { buildModel, type Model, type ModelUse } from '../model/mesh'
 import type { Recipe, Vec3 } from '../protocol'
 import { PAINT_DOCTOR, PAINT_MODEL, harmonizeColors, paint, type PaintOpts } from './paint'
 
@@ -23,7 +23,7 @@ export function solidMaterial(): MeshStandardMaterial {
 
 let worn: MeshStandardMaterial | null = null
 /** What a doctor wears (hats, hair, capes), painted as the doctor under it is, not engraved as a thing in hand. */
-export function wornMaterial(): MeshStandardMaterial {
+function wornMaterial(): MeshStandardMaterial {
   worn ??= modelMaterial(PAINT_DOCTOR)
   return worn
 }
@@ -32,18 +32,20 @@ export function wornMaterial(): MeshStandardMaterial {
 export const GLOW_BASE = 1.7
 export const GLOW = new MeshBasicMaterial({ vertexColors: true, color: new Color(GLOW_BASE, GLOW_BASE, GLOW_BASE) })
 
-const built = new WeakMap<Recipe, Model>()
+/** How the page draws a model: as a thing or a piece of the arena, or worn by a doctor (finer and soft: mesh.ts). */
+export type DrawnUse = Exclude<ModelUse, 'collider'>
+const built: Record<DrawnUse, WeakMap<Recipe, Model>> = { drawn: new WeakMap(), worn: new WeakMap() }
 
-/** A model's geometry as drawn (the insides of open shells too), built once per recipe, its colours brought into the painting's range. */
-export function modelOf(recipe: Recipe): Model {
-  let m = built.get(recipe)
+/** A model's geometry as the page draws it (the insides of open shells too), built once per recipe and use, its colours brought into the painting's range. */
+export function modelOf(recipe: Recipe, use: DrawnUse): Model {
+  let m = built[use].get(recipe)
   if (!m) {
-    m = buildModel(recipe, 'drawn')
+    m = buildModel(recipe, use)
     for (const g of m.parts.values()) {
       if (g.solid) harmonizeColors(g.solid.getAttribute('color'))
       if (g.glow) harmonizeColors(g.glow.getAttribute('color'), true)
     }
-    built.set(recipe, m)
+    built[use].set(recipe, m)
   }
   return m
 }
@@ -59,8 +61,9 @@ export class ModelInstance {
     readonly recipe: Recipe,
     solid: Material = solidMaterial(),
     glow: Material = GLOW,
+    use: DrawnUse = 'drawn',
   ) {
-    const model = modelOf(recipe)
+    const model = modelOf(recipe, use)
     const groups = new Map<string | null, Group>([[null, this.root]])
     for (const def of recipe.parts) {
       const g = new Group()
@@ -99,5 +102,8 @@ export class ModelInstance {
     this.root.removeFromParent()
   }
 }
+
+/** A part a doctor wears: drawn finer and soft, painted as the doctor is. */
+export const wornInstance = (recipe: Recipe) => new ModelInstance(recipe, wornMaterial(), GLOW, 'worn')
 
 export const euler = new Euler()

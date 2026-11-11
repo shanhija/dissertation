@@ -214,7 +214,7 @@ export class ArenaScene {
     for (const d of view.decor) {
       const recipe = models.get(d.model)
       if (!recipe) continue
-      const model = modelOf(recipe)
+      const model = modelOf(recipe, 'drawn')
       m4.compose(at.set(...d.at), q4.setFromEuler(e.set(d.rot[0], d.rot[1], d.rot[2], 'XYZ')), new Vector3(d.scale, d.scale, d.scale))
       for (const [name, geo] of model.parts) {
         const t = partTransform(recipe.parts, name)

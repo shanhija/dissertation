@@ -16,7 +16,7 @@
  */
 
 import {
-  BoxGeometry,
+  Bone,
   CanvasTexture,
   CapsuleGeometry,
   Color,
@@ -24,7 +24,6 @@ import {
   DoubleSide,
   Euler,
   Group,
-  LatheGeometry,
   LinearFilter,
   LinearMipmapLinearFilter,
   Matrix4,
@@ -33,138 +32,61 @@ import {
   MeshStandardMaterial,
   OctahedronGeometry,
   Quaternion,
+  Skeleton,
+  SkinnedMesh,
+  Sphere,
   SphereGeometry,
   Sprite,
   SpriteMaterial,
   Vector2,
   Vector3,
-  type BufferAttribute,
   type BufferGeometry,
   type Material,
 } from 'three'
 
 import { BODY, SLOT_FRAMES } from '../doctor'
 import { GAITS, SLOTS, type Gait, type Hand, type Look, type Quat, type Slot, type Vec3, type WardrobePart } from '../protocol'
-import { boxUV } from './materials'
-import { ModelInstance, wornMaterial } from './models'
+import {
+  ANKLE,
+  BREAST_POCKET,
+  COAT,
+  COAT_BUTTONS,
+  CUFF,
+  ELBOW,
+  HAND,
+  JOINTS,
+  KNEE,
+  LAPELS,
+  PEN_AT,
+  SEAT,
+  SHIRT,
+  SHIRT_BUTTONS,
+  SHOE,
+  SKIRT,
+  SKIRT_LENGTH,
+  SKIRT_Y,
+  SLEEVE,
+  SOLE,
+  SPRINGS,
+  SPRING_WAIST,
+  TROUSER_LEG,
+  drape,
+} from './figure'
+import { ModelInstance, wornInstance } from './models'
 import { Swing, type Fence } from './swing'
 import { PAINT_DOCTOR, harmonize, harmonizedHex, paint } from './paint'
 import { LABEL_LAYER } from './post'
 import { LABEL_FONT } from '../fonts'
 
-/** The joints on the standard doctor, metres: lengths run from joint to joint. */
-export const JOINTS = {
-  hipX: 0.1,
-  thigh: 0.44,
-  shin: 0.43,
-  /** Where the spine bends. */
-  waist: 1.0,
-  neck: 1.49,
-  upper: 0.3,
-  fore: 0.26,
-  /** From the wrist to the middle of the hand. */
-  palm: 0.05,
-} as const
-/** The ankle's height when standing. */
-const ANKLE = BODY.hips.y - JOINTS.thigh - JOINTS.shin
 /** Where the game holds a thing, as the sim's hand: below and right of the eyes, half a metre ahead. */
 const HOLD = { eye: 1.55, right: 0.28, down: 0.28, ahead: 0.5 }
-
-/** Unindexed, with box-mapped texture coordinates (a tile per `tile` metres), for the cloth's weave. */
-function woven<T extends BufferGeometry>(g: T, tile: number): BufferGeometry {
-  const flat = g.toNonIndexed()
-  g.dispose()
-  boxUV(flat, tile)
-  return flat
-}
-
-const SOLE = new BoxGeometry(0.12, 0.035, 0.28)
-const TOE = new SphereGeometry(0.075, 14, 10)
-const THIGH = woven(new CylinderGeometry(0.08, 0.072, JOINTS.thigh + 0.04, 14), 0.25)
-const SHIN = woven(new CylinderGeometry(0.072, 0.064, JOINTS.shin + 0.03, 14), 0.25)
-const KNEE = new SphereGeometry(0.074, 14, 10)
-const HIPS = woven(new BoxGeometry(0.36, 0.2, 0.22), 0.25)
-const TORSO = woven(new CapsuleGeometry(0.15, 0.3, 4, 14), 0.25)
-/** The coat above the waist, on the spine. */
-const COAT = woven(
-  new LatheGeometry(
-    [
-      [0.242, 0.95],
-      [0.238, 1.0],
-      [0.228, 1.2],
-      [0.222, 1.38],
-      [0.19, 1.45],
-      [0.11, 1.5],
-    ].map(([r, y]) => new Vector2(r, y)),
-    28,
-    0.42,
-    Math.PI * 2 - 0.84,
-  ),
-  0.25,
-)
-/**
- * The coat below the waist: four panels round the open front, each hanging from the waist ring,
- * swinging on its own and bending below the pockets, the hem trailing.
- */
-const SKIRT_Y = 1.0
-const SKIRT_R = 0.238
-const PANEL_ARC = (Math.PI * 2 - 0.84) / 4
-/** How far down from the waist a panel bends (below the pockets), and its whole length to the hem. */
-const BEND_FROM = 0.3
-const PANEL_LENGTH = SKIRT_Y - BODY.coat.bottom
-/** The panel's rows, hem to waist, flaring a little toward the hem: rows enough down the bend for it to curve. */
-const PANEL_ROWS = [0.42, 0.47, 0.52, 0.57, 0.62, 0.67, 0.72, 0.8, 0.9, 1.0]
-const panelRadius = (y: number) => (y < 0.5 ? 0.258 - ((y - 0.42) / 0.08) * 0.006 : y < 0.8 ? 0.252 - ((y - 0.5) / 0.3) * 0.01 : 0.242 - ((y - 0.8) / 0.2) * 0.004)
-const PANELS = [0, 1, 2, 3].map((i) => {
-  const from = 0.42 + i * PANEL_ARC
-  const mid = from + PANEL_ARC / 2
-  const g = new LatheGeometry(
-    PANEL_ROWS.map((y) => new Vector2(panelRadius(y), y)),
-    7,
-    from,
-    PANEL_ARC,
-  )
-  // In the panel's own frame: hung from its middle on the waist ring, +z outward.
-  g.translate(-Math.sin(mid) * SKIRT_R, -SKIRT_Y, -Math.cos(mid) * SKIRT_R)
-  g.rotateY(-mid)
-  return { geometry: woven(g, 0.25), mid }
-})
-/**
- * A coat panel bent out by `bend` radians at the hem (in by less than 0), from its rest shape into
- * `out` (a copy of it): straight down to BEND_FROM, then curving, the angle growing evenly to the
- * hem, the cloth keeping its length.
- */
-export function bendPanel(out: BufferGeometry, rest: BufferGeometry, bend: number): void {
-  const pos = out.getAttribute('position') as BufferAttribute
-  const nor = out.getAttribute('normal') as BufferAttribute
-  const rp = rest.getAttribute('position').array
-  const rn = rest.getAttribute('normal').array
-  const b = bend / (PANEL_LENGTH - BEND_FROM)
-  for (let i = 0; i < pos.count; i++) {
-    const [x, y, z] = [rp[i * 3]!, rp[i * 3 + 1]!, rp[i * 3 + 2]!]
-    const [nx, ny, nz] = [rn[i * 3]!, rn[i * 3 + 1]!, rn[i * 3 + 2]!]
-    const u = -y - BEND_FROM
-    if (u <= 0 || Math.abs(b) < 1e-6) {
-      pos.setXYZ(i, x, y, z)
-      nor.setXYZ(i, nx, ny, nz)
-      continue
-    }
-    // The middle line of the panel (z 0, the panel's frame has +z outward) curved from BEND_FROM, and the cloth turned with it.
-    const phi = b * u
-    const [c, sn] = [Math.cos(phi), Math.sin(phi)]
-    pos.setXYZ(i, x, -BEND_FROM - sn / b + z * sn, (1 - c) / b + z * c)
-    nor.setXYZ(i, nx, ny * c + nz * sn, -ny * sn + nz * c)
-  }
-  pos.needsUpdate = true
-  nor.needsUpdate = true
-}
 
 /**
  * The body a worn part may not swing into, in each slot's frame: the trunk (the coat round the
  * back and sides, the shirt in front) for what is worn on the body and back, the head for what is
  * worn on it, nothing for the feet.
  */
-const TRUNK = { x: 0, z: -0.05, rx: 0.23, rz: 0.18 }
+const TRUNK = { x: 0, z: 0, rx: 0.2, rz: 0.145 }
 const SKULL = { x: 0, z: 0, rx: 0.12, rz: 0.12 }
 const FENCES = Object.fromEntries(
   SLOTS.map((s) => {
@@ -217,24 +139,17 @@ export function gaitOf(gait: Gait, who: string): Exclude<Gait, 'chance'> {
   const real = GAITS.slice(1) as Exclude<Gait, 'chance'>[]
   return real[(h >>> 0) % real.length]!
 }
-const LAPEL = new BoxGeometry(0.075, 0.26, 0.012)
-const POCKET = new BoxGeometry(0.12, 0.13, 0.012)
-const PEN = new CylinderGeometry(0.007, 0.007, 0.13, 6)
+const PEN = new CapsuleGeometry(0.007, 0.12, 2, 8)
 const BUTTON = new SphereGeometry(0.011, 8, 6)
-const UPPER = woven(new CylinderGeometry(0.066, 0.063, JOINTS.upper + 0.03, 14), 0.25)
-const FORE = woven(new CylinderGeometry(0.063, 0.058, JOINTS.fore + 0.02, 14), 0.25)
-const BALL = new SphereGeometry(0.066, 14, 10)
-const CUFF = new CylinderGeometry(0.061, 0.061, 0.05, 14)
-const HAND = new SphereGeometry(0.05, 14, 10)
-const THUMB = new CapsuleGeometry(0.016, 0.04, 3, 6)
-const NECK = new CylinderGeometry(0.05, 0.056, 0.12, 12)
+const NECK = new CylinderGeometry(0.05, 0.056, 0.12, 16)
 const HEAD = new SphereGeometry(BODY.head.radius, 28, 20)
-const EAR = new SphereGeometry(0.03, 10, 8)
-const EYE = new SphereGeometry(0.024, 12, 10)
-const PUPIL = new SphereGeometry(0.012, 10, 8)
-const BROW = new BoxGeometry(0.05, 0.011, 0.012)
-const NOSE = new CapsuleGeometry(0.017, 0.03, 4, 8)
-const MOUTH = new BoxGeometry(0.05, 0.008, 0.01)
+const EAR = new SphereGeometry(0.03, 12, 8)
+const EYE = new SphereGeometry(0.024, 14, 10)
+const PUPIL = new SphereGeometry(0.012, 10, 6)
+/** Brows and mouth lie across the face, round-ended. */
+const BROW = new CapsuleGeometry(0.0065, 0.036, 3, 8).rotateZ(Math.PI / 2)
+const NOSE = new CapsuleGeometry(0.017, 0.03, 4, 12)
+const MOUTH = new CapsuleGeometry(0.0048, 0.042, 3, 8).rotateZ(Math.PI / 2)
 const WHITE = paint(new MeshStandardMaterial({ color: harmonizedHex('#fbfaf5'), roughness: 0.35 }), PAINT_DOCTOR)
 const DARK = paint(new MeshStandardMaterial({ color: harmonizedHex('#3a2a22'), roughness: 0.8 }), PAINT_DOCTOR)
 const PENS = ['#c0303a', '#2a4aa0', '#1e1e24'].map((color) => paint(new MeshStandardMaterial({ color: harmonizedHex(color), roughness: 0.4, metalness: 0.2 }), PAINT_DOCTOR))
@@ -391,6 +306,8 @@ export interface DoctorPose {
 /** What a doctor does for a moment, over whatever else it is doing. */
 export type Gesture = 'use' | 'alt' | 'throw' | 'shove' | 'pick' | 'taunt'
 const LASTS: Record<Gesture, number> = { use: 0.35, alt: 0.4, throw: 0.55, shove: 0.45, pick: 0.7, taunt: 2.2 }
+/** The furthest the legs push the coat out from hanging straight, radians. */
+const LEG_PUSH = 0.75
 /** Seconds it takes to get from lying as a ragdoll back into the doctor's own pose. */
 const GET_UP = 0.45
 
@@ -441,13 +358,13 @@ export function reach(s: Vector3, t: Vector3, a: number, b: number, pole: Vector
 }
 
 /** The joints a ragdoll turns. */
-type Skeleton = Pick<DoctorMesh, 'root' | 'body' | 'pelvis' | 'spine' | 'neck' | 'hips' | 'knees' | 'ankles' | 'shoulders' | 'elbows' | 'wrists'>
+type Jointed = Pick<DoctorMesh, 'root' | 'body' | 'pelvis' | 'spine' | 'neck' | 'hips' | 'knees' | 'ankles' | 'shoulders' | 'elbows' | 'wrists'>
 
 /**
  * Lays the joints as a ragdoll lies: the trunk's turn and the pelvis on its point, then each part
  * turned from the part it hangs from (the ragdoll's parts have the joints' own frames).
  */
-export function applyRag(m: Skeleton, p: Vec3, q: Quat[]): void {
+export function applyRag(m: Jointed, p: Vec3, q: Quat[]): void {
   const Q = (i: number) => new Quaternion(q[i]![0], q[i]![1], q[i]![2], q[i]![3])
   // The parts: pelvis, chest, head, right arm (upper, fore), left arm, right leg (thigh, shin), left leg.
   const pelvis = Q(0)
@@ -503,6 +420,7 @@ export class DoctorMesh {
   private readonly feetAt: Group[] = []
   private lookKey = ''
   private height: number = BODY.height
+  private build = 1
   /** The name tag, standing over the doctor's head (shown while the doctor can be seen), TAG_HEIGHT page pixels tall above its foot. */
   readonly tag = new ScreenLabel(240, TAG_HEIGHT)
   /**
@@ -531,11 +449,18 @@ export class DoctorMesh {
   private readonly gestures: { kind: Gesture; at: number; hand: Hand }[] = []
   private readonly seed = Math.random() * 100
   /**
-   * The coat's panels below the waist, each swinging on a spring (angle out from hanging straight),
-   * its hem on a softer one that trails it (hem: its angle out), bent to it (bent: as last drawn).
+   * The coat below the waist: one piece of cloth (its own copy, draped each frame) swung by four
+   * springs round it (angle out from hanging straight), each with its hem on a softer one that
+   * trails it (hem: its angle out); draped: the springs as last drawn.
    */
   private readonly skirt = new Group()
-  private readonly panels: { group: Group; geometry: BufferGeometry; rest: BufferGeometry; mid: number; angle: number; speed: number; hem: number; hemSpeed: number; bent: number }[] = []
+  /** The skinned parts' skeletons, each holding its joints' turns in a texture of its own. */
+  private readonly skeletons: Skeleton[] = []
+  /** The limbs' girth on each joint (hips, knees, shoulders, elbows), widened by build. */
+  private readonly flesh: Group[] = []
+  private readonly skirtGeometry: BufferGeometry = SKIRT.geometry.clone()
+  private readonly springs = SPRINGS.map((mid) => ({ mid, angle: 0.06, speed: 0, hem: 0.06, hemSpeed: 0 }))
+  private draped = SPRINGS.map(() => ({ angle: NaN, bend: NaN }))
   private style: GaitStyle = STEADY
   /** The head lagging the body's moves, a spring each way; the free arms' swing, a spring each. */
   private readonly nod = { x: 0, z: 0, vx: 0, vz: 0 }
@@ -572,99 +497,73 @@ export class DoctorMesh {
     const m = this.mats
     this.root.add(this.body)
 
-    // Hips and legs.
+    // Each skinned part (the trouser legs, the coat above the waist, the sleeves) and the joints it bends with.
+    const skinned: { mesh: SkinnedMesh; joints: Group[]; seen: Sphere }[] = []
+    /** A limb's girth on its joint, widened by build with nothing hanging from it. */
+    const fleshOf = (joint: Group) => {
+      const g = new Group()
+      joint.add(g)
+      this.flesh.push(g)
+      return g
+    }
+    // Hips and legs: trouser legs bending at the knee, the seat between them.
     this.pelvis.position.y = BODY.hips.y
     this.body.add(this.pelvis)
-    this.hipsMesh = new Mesh(HIPS, m.trousers)
+    this.hipsMesh = new Mesh(SEAT, m.trousers)
     this.pelvis.add(this.hipsMesh)
     for (const side of [-1, 1]) {
       const hip = new Group()
       hip.position.set(side * JOINTS.hipX, 0, 0)
-      const thigh = new Mesh(THIGH, m.trousers)
-      thigh.position.y = -JOINTS.thigh / 2
       const knee = new Group()
       knee.position.y = -JOINTS.thigh
-      const shin = new Mesh(SHIN, m.trousers)
-      shin.position.y = -JOINTS.shin / 2
       const ankle = new Group()
       ankle.position.y = -JOINTS.shin
       const sole = new Mesh(SOLE, DARK)
-      sole.position.set(0, 0.018 - ANKLE, 0.04)
-      const toe = new Mesh(TOE, m.shoes)
-      toe.scale.set(0.85, 0.6, 1.9)
-      toe.position.set(0, 0.06 - ANKLE, 0.05)
-      ankle.add(sole, toe)
-      this.shoes.push(sole, toe)
+      const shoe = new Mesh(SHOE, m.shoes)
+      ankle.add(sole, shoe)
+      this.shoes.push(sole, shoe)
       // What is worn on the feet: the ground under the ankle, the left as made, the right mirrored.
       const feet = new Group()
       feet.position.y = -ANKLE
       feet.scale.x = side
       ankle.add(feet)
       this.feetAt.push(feet)
-      knee.add(new Mesh(KNEE, m.trousers), shin, ankle)
-      hip.add(thigh, knee)
+      knee.add(ankle)
+      const shin = fleshOf(knee)
+      shin.add(new Mesh(KNEE, m.trousers))
+      const leg = new SkinnedMesh(TROUSER_LEG, m.trousers)
+      hip.add(leg, knee)
+      skinned.push({ mesh: leg, joints: [fleshOf(hip), shin], seen: new Sphere(new Vector3(), 1) })
       this.pelvis.add(hip)
       this.hips.push(hip)
       this.knees.push(knee)
       this.ankles.push(ankle)
     }
 
-    // The trunk on the spine: positions below are from the waist.
+    // The trunk on the spine: positions below are from the waist. The skirt hangs from the waist
+    // on the hips; the coat above it bends between the hips and the chest.
     const w = JOINTS.waist
     this.spine.position.y = w
     this.body.add(this.spine)
     this.spine.add(this.chest)
-    const torso = new Mesh(TORSO, m.shirt)
-    torso.position.y = 1.17 - w
-    torso.scale.set(1.25, 1, 0.75)
-    const coat = new Mesh(COAT, m.coat)
-    coat.position.y = -w
-    this.chest.add(torso, coat)
-    // The coat's front: lapels, pockets (pens in the breast pocket) and the shirt's buttons.
-    for (const side of [-1, 1]) {
-      const lapel = new Mesh(LAPEL, m.coat)
-      lapel.position.set(side * 0.085, 1.32 - w, 0.205)
-      lapel.rotation.set(-0.12, side * 0.35, side * 0.32)
-      this.chest.add(lapel)
-    }
-    // Below the waist the coat hangs in four panels from the pelvis, the pockets on the front two.
     this.skirt.position.y = SKIRT_Y - BODY.hips.y
     this.pelvis.add(this.skirt)
-    for (const panel of PANELS) {
-      const g = new Group()
-      g.position.set(Math.sin(panel.mid) * SKIRT_R, 0, Math.cos(panel.mid) * SKIRT_R)
-      g.rotation.set(0, panel.mid, 0, 'YXZ')
-      // Its own copy to bend, seen wherever the hem may swing.
-      const geometry = panel.geometry.clone()
-      geometry.computeBoundingSphere()
-      geometry.boundingSphere!.radius += 0.35
-      g.add(new Mesh(geometry, m.coat))
-      this.skirt.add(g)
-      this.panels.push({ group: g, geometry, rest: panel.geometry, mid: panel.mid, angle: 0.06, speed: 0, hem: 0.06, hemSpeed: 0, bent: 0 })
+    const coat = new SkinnedMesh(COAT, m.coat)
+    // Its joints: the hips and the chest, then each upper arm as the arms are made.
+    const coatJoints = [this.skirt, this.chest]
+    skinned.push({ mesh: coat, joints: coatJoints, seen: new Sphere(new Vector3(0, 1.2, 0), 0.6) })
+    // The coat's front: the shirt in its V, the lapels, the breast pocket with its pens, buttons.
+    const front: Mesh[] = [coat, new Mesh(SHIRT, m.shirt), new Mesh(LAPELS, m.coat), new Mesh(BREAST_POCKET, m.coat)]
+    PEN_AT.forEach((at, i) => front.push(new Mesh(PEN, PENS[i]!).translateX(at.x).translateY(at.y).translateZ(at.z)))
+    for (const at of [...COAT_BUTTONS, ...SHIRT_BUTTONS]) front.push(new Mesh(BUTTON, WHITE).translateX(at.x).translateY(at.y).translateZ(at.z))
+    for (const mesh of front) {
+      mesh.position.y -= w
+      this.chest.add(mesh)
     }
-    for (const side of [-1, 1]) {
-      const panel = this.panels[side > 0 ? 0 : 3]!
-      const at = new Vector3(side * 0.15 - panel.group.position.x, 0.72 - SKIRT_Y, 0.21 - panel.group.position.z).applyAxisAngle(new Vector3(0, 1, 0), -panel.mid)
-      const pocket = new Mesh(POCKET, m.coat)
-      pocket.position.copy(at)
-      pocket.rotation.y = side * 0.55 - panel.mid
-      panel.group.add(pocket)
-    }
-    const breast = new Mesh(POCKET, m.coat)
-    breast.scale.set(0.8, 0.8, 1)
-    breast.position.set(-0.155, 1.2 - w, 0.185)
-    breast.rotation.y = -0.6
-    this.chest.add(breast)
-    PENS.forEach((pen, i) => {
-      const p = new Mesh(PEN, pen)
-      p.position.set(-0.17 + i * 0.018, 1.27 - w, 0.185 - i * 0.008)
-      this.chest.add(p)
-    })
-    for (let i = 0; i < 4; i++) {
-      const b = new Mesh(BUTTON, WHITE)
-      b.position.set(0, 0.98 - w + i * 0.11, 0.115)
-      this.chest.add(b)
-    }
+    // Its own copy of the skirt to drape, seen wherever the hem may swing.
+    this.skirtGeometry.computeBoundingSphere()
+    this.skirtGeometry.boundingSphere!.radius += 0.35
+    this.skirt.add(new Mesh(this.skirtGeometry, m.coat))
 
     // Neck and head: the head turns at the neck.
     this.neck.position.y = JOINTS.neck - w
@@ -704,29 +603,25 @@ export class DoctorMesh {
     mouth.position.set(0, -0.062, 0.118)
     this.head.add(nose, mouth)
 
-    // Arms: shoulder, elbow, wrist.
+    // Arms: shoulder, elbow, wrist; a sleeve bending at the elbow, the shirt's cuff out of it, a hand.
     for (const side of [-1, 1]) {
       const shoulder = new Group()
       shoulder.position.set(side * BODY.shoulders.half, BODY.shoulders.y - w, 0)
-      const upper = new Mesh(UPPER, m.coat)
-      upper.position.y = -JOINTS.upper / 2
       const elbow = new Group()
       elbow.position.y = -JOINTS.upper
-      const fore = new Mesh(FORE, m.coat)
-      fore.position.y = -JOINTS.fore / 2
-      const cuff = new Mesh(CUFF, m.shirt)
-      cuff.position.y = -JOINTS.fore + 0.015
       const wrist = new Group()
       wrist.position.y = -JOINTS.fore
       const hand = new Mesh(HAND, m.skin)
-      hand.position.y = -JOINTS.palm
-      hand.scale.set(0.85, 1.1, 1)
-      const thumb = new Mesh(THUMB, m.skin)
-      thumb.position.set(-side * 0.035, -0.03, 0.03)
-      thumb.rotation.z = side * 0.5
-      wrist.add(hand, thumb)
-      elbow.add(new Mesh(BALL, m.coat), fore, cuff, wrist)
-      shoulder.add(new Mesh(BALL, m.coat), upper, elbow)
+      hand.scale.x = side
+      wrist.add(hand)
+      elbow.add(wrist)
+      const forearm = fleshOf(elbow)
+      forearm.add(new Mesh(ELBOW, m.coat), new Mesh(CUFF, m.shirt))
+      const sleeve = new SkinnedMesh(SLEEVE, m.coat)
+      shoulder.add(sleeve, elbow)
+      const upperArm = fleshOf(shoulder)
+      skinned.push({ mesh: sleeve, joints: [upperArm, forearm], seen: new Sphere(new Vector3(), 0.75) })
+      coatJoints.push(upperArm)
       this.spine.add(shoulder)
       this.shoulders.push(shoulder)
       this.elbows.push(elbow)
@@ -744,6 +639,21 @@ export class DoctorMesh {
         g.position.set(o[0], o[1] - w, o[2])
         this.spine.add(g)
       }
+    }
+    // Skinned as made, every joint at rest: a bone on each joint, and the part seen wherever they take it.
+    this.root.updateMatrixWorld(true)
+    for (const { mesh, joints, seen } of skinned) {
+      const skeleton = new Skeleton(
+        joints.map((j) => {
+          const bone = new Bone()
+          j.add(bone)
+          bone.updateMatrixWorld(true)
+          return bone
+        }),
+      )
+      mesh.bind(skeleton)
+      mesh.boundingSphere = seen
+      this.skeletons.push(skeleton)
     }
     this.body.traverse((o) => {
       if (o instanceof Mesh) o.castShadow = true
@@ -764,12 +674,14 @@ export class DoctorMesh {
     this.style = STYLES[gaitOf(look.gait ?? 'chance', who)]
     for (const k of ['skin', 'eyes', 'coat', 'shirt', 'trousers', 'shoes'] as const) harmonize(this.mats[k].color.set(look[k]))
     this.height = look.height
+    this.build = look.build
     const h = look.height / BODY.height
     this.body.scale.set(h, h, h)
     // Build widens the trunk and moves the arms and legs out; the head and what it wears stay as they are.
     this.chest.scale.set(look.build, 1, look.build)
     this.skirt.scale.set(look.build, 1, look.build)
     this.hipsMesh.scale.set(look.build, 1, look.build)
+    for (const g of this.flesh) g.scale.set(look.build, 1, look.build)
     this.shoulders.forEach((a, i) => (a.position.x = (i === 0 ? -1 : 1) * BODY.shoulders.half * look.build))
     this.hips.forEach((l, i) => (l.position.x = (i === 0 ? -1 : 1) * JOINTS.hipX * look.build))
     this.wornGroups.body[0]!.scale.set(look.build, 1, look.build)
@@ -785,7 +697,7 @@ export class DoctorMesh {
         this.worn.set(
           s,
           this.wornGroups[s].map((g) => {
-            const inst = new ModelInstance(part.recipe, wornMaterial())
+            const inst = wornInstance(part.recipe)
             g.add(inst.root)
             return { inst, swing: new Swing(part.recipe, inst.parts, inst.root, FENCES[s]) }
           }),
@@ -1195,42 +1107,72 @@ export class DoctorMesh {
   }
 
   /**
-   * The coat's panels below the waist, each on a spring: thrown out by the body's acceleration
-   * against it, by the air as it goes, by falling and turning; pushed out by the thigh in front of
-   * or behind it; fluttering (0..1) as told. Each hem trails its panel on a softer spring, flaring
-   * further with the air, and the panel bends to it. Then what is worn swings (swing.ts).
+   * The coat below the waist, round each of its springs: thrown out by the body's acceleration
+   * against it, by the air as it goes, by falling and turning; pushed out as far as the legs reach
+   * (clearance); fluttering (0..1) as told. Each hem trails its spring on a softer one, flaring
+   * further with the air, and the cloth bends to it; the skirt is draped again once a spring has
+   * moved enough to see. Then what is worn swings (swing.ts).
    */
-  private swingClothes(dt: number, lx: number, vy: number, lz: number, legs: { hip: number }[], flutter: number): void {
+  private swingClothes(dt: number, lx: number, vy: number, lz: number, legs: { hip: number; knee: number }[], flutter: number): void {
+    const clear = this.clearance(legs)
     const n = Math.max(1, Math.ceil(dt * 120))
     const h = dt / n
-    for (const [i, panel] of this.panels.entries()) {
-      const nx = Math.sin(panel.mid)
-      const nz = Math.cos(panel.mid)
+    for (const [i, s] of this.springs.entries()) {
+      const nx = Math.sin(s.mid)
+      const nz = Math.cos(s.mid)
       const out = clamp(-(this.accel.x * nx + this.accel.z * nz) * 0.03 - (lx * nx + lz * nz) * 0.045 + Math.max(0, -vy) * 0.05 + Math.abs(this.yawRate) * 0.06 + this.air * 0.12, -0.1, 1.2)
-      const leg = legs[nx > 0 ? 1 : 0]!
-      const push = nz > 0.2 ? Math.max(0, -leg.hip) * 0.9 : nz < -0.2 ? Math.max(0, leg.hip) * 0.6 : 0
+      const push = clear[i]!
       const target = 0.05 + out + flutter * (0.25 + 0.2 * Math.sin(this.last * 17 + i * 2.1))
       const lift = out * 0.35 + flutter * 0.3 * Math.sin(this.last * 23 + i * 1.3)
       for (let j = 0; j < n; j++) {
-        panel.speed += ((target - panel.angle) * 90 - panel.speed * 10) * h
-        panel.angle += panel.speed * h
-        if (panel.angle < push) {
-          panel.angle = push
-          panel.speed = Math.max(panel.speed, 0)
+        s.speed += ((target - s.angle) * 90 - s.speed * 10) * h
+        s.angle += s.speed * h
+        if (s.angle < push) {
+          s.angle = push
+          s.speed = Math.max(s.speed, 0)
         }
-        panel.hemSpeed += ((panel.angle + lift - panel.hem) * 40 - panel.hemSpeed * 4.5) * h
-        panel.hem += panel.hemSpeed * h
+        s.hemSpeed += ((s.angle + lift - s.hem) * 40 - s.hemSpeed * 4.5) * h
+        s.hem += s.hemSpeed * h
       }
-      panel.angle = Math.min(panel.angle, 1.4)
-      panel.group.rotation.set(-panel.angle, panel.mid, 0)
-      // Bent no further in than the leg behind it leaves room for.
-      const bend = clamp(panel.hem - panel.angle, -0.3, 0.9)
-      if (Math.abs(bend - panel.bent) > 0.004) {
-        bendPanel(panel.geometry, panel.rest, bend)
-        panel.bent = bend
-      }
+      s.angle = Math.min(s.angle, 1.4)
+    }
+    // Bent no further in than the leg behind it leaves room for.
+    const now = this.springs.map((s) => ({ angle: s.angle, bend: clamp(s.hem - s.angle, -0.3, 0.9) }))
+    if (now.some((x, i) => !(Math.abs(x.angle - this.draped[i]!.angle) < 0.003 && Math.abs(x.bend - this.draped[i]!.bend) < 0.004))) {
+      drape(this.skirtGeometry, SKIRT, now)
+      this.draped = now
     }
     for (const list of this.worn.values()) for (const w of list) w.swing.step(dt)
+  }
+
+  /**
+   * How far out from hanging straight the cloth round each of the coat's springs must swing to
+   * clear the legs as their hips and knees bend: points down each thigh and shin, in the hips'
+   * frame, against the cloth hanging from the waist in the spring's direction. At most LEG_PUSH:
+   * a running kick would throw the coat up like a bell; a heel kicked high shows through for a moment.
+   */
+  private clearance(legs: { hip: number; knee: number }[]): number[] {
+    const b = this.build
+    const girth = 0.085 * b
+    const points = legs.flatMap((l, i) => {
+      const x = (i === 0 ? -1 : 1) * JOINTS.hipX * b
+      const knee = [-JOINTS.thigh * Math.sin(l.hip), -JOINTS.thigh * Math.cos(l.hip)] as const
+      const shin = l.hip + l.knee
+      return [
+        ...[0.5, 1].map((f) => [x, knee[0] * f, knee[1] * f]),
+        ...[1 / 3, 2 / 3].map((f) => [x, knee[0] - JOINTS.shin * f * Math.sin(shin), knee[1] - JOINTS.shin * f * Math.cos(shin)]),
+      ]
+    })
+    return SPRINGS.map((θ, i) => {
+      const [nx, nz] = [Math.sin(θ), Math.cos(θ)]
+      let need = 0
+      for (const [x, z, y] of points) {
+        const below = SKIRT_Y - BODY.hips.y - y!
+        if (below < 0.05 || below > SKIRT_LENGTH + 0.05) continue
+        need = Math.max(need, Math.atan2(x! * nx + z! * nz + girth - SPRING_WAIST[i]! * b, below))
+      }
+      return Math.min(need, LEG_PUSH)
+    })
   }
 
   /** Lies as the game's ragdoll lies: the pelvis joint at p, each part turned as q says (see RagSnap). */
@@ -1239,7 +1181,7 @@ export class DoctorMesh {
     const dt = this.last < 0 ? 1 / 60 : clamp(now - this.last, 0, 0.1)
     const flying = dt > 0 && this.ragAt > now - 0.2 ? Math.min(1, new Vector3(...p).distanceTo(this.ragWas) / dt / 6) : 0
     this.ragWas.set(...p)
-    this.swingClothes(dt, 0, 0, 0, [{ hip: 0 }, { hip: 0 }], flying)
+    this.swingClothes(dt, 0, 0, 0, [{ hip: 0, knee: 0 }, { hip: 0, knee: 0 }], flying)
     this.stars.visible = false
     this.last = now
     this.root.rotation.y = yaw
@@ -1277,7 +1219,8 @@ export class DoctorMesh {
 
   dispose(): void {
     for (const w of this.worn.values()) w.forEach((x) => x.inst.dispose())
-    for (const p of this.panels) p.geometry.dispose()
+    this.skirtGeometry.dispose()
+    for (const s of this.skeletons) s.dispose()
     for (const m of Object.values(this.mats)) (m as Material).dispose()
     this.tag.dispose()
     this.bubble.dispose()

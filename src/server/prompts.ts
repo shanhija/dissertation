@@ -7,6 +7,7 @@
 
 import { BODY, SLOT_FRAMES } from '../doctor'
 import { BUDGET_WINDOW, BUDGETS, CRATE_OWNER_ONLY, DESIGN_LIMIT, GAITS, HIT_CAP, HOLD_MAX, MATERIALS, PER_SECOND_CAP, SLOTS, SOUNDS, type ArenaSetting, type Gait, type Look } from '../protocol'
+import { SOFT } from '../model/mesh'
 import { DOCTOR_MASS } from '../sim/forces'
 import { FLOP, MAX_SIGHTS_PER_SOURCE } from '../sim/sim'
 import { TONE_NAMES } from './voice'
@@ -18,7 +19,16 @@ const str = (description: string): Schema => ({ type: 'string', description })
 /** Written just before a model's code, so the model is built from the real form: it streams in 1 to 2 s. */
 const FORM = str('Before the model code: in a sentence or two, the real form of what you will model: its main masses and how they join, what is round, curved, tapered or thin, where its edges are soft and where sharp, its proportions.')
 
-export const MODEL_DOC = `MODEL CODE: the body of  function (m) { ... }  It builds a model out of shapes. Metres, y up.
+/**
+ * How a model's shapes are drawn, as the modelling reference says it (model/mesh.ts): things and
+ * the arena as given, sharp where the shapes are; what a doctor wears finer and softened.
+ */
+const DRAWN = {
+  drawn: "Each is drawn as given and smoothly lit: a round shape with about a dozen sides round (a tube six), while a model's box, the ends of a cylinder and an outline made thick, at its rim and between its points, keep sharp edges, and where shapes meet nothing is blended.",
+  worn: `Each is drawn smoothly lit and finely, a round shape with about eighteen sides round (a tube nine), and softened: the edges of a box, the rims of a cylinder, the rim of an outline made thick and the corners of an outline or of a lathe's profile are rounded off by up to ${SOFT * 100} cm (less on a small shape), and a point on the axis of a cone or a lathe is capped round, a little shorter; where shapes meet nothing is blended.`,
+} as const
+
+const modelDoc = (drawing: keyof typeof DRAWN) => `MODEL CODE: the body of  function (m) { ... }  It builds a model out of shapes. Metres, y up.
 Every shape takes opts { at: [x, y, z] (its centre), rot: [rx, ry, rz] (radians, applied x then y then z), scale: [sx, sy, sz], color: '#rrggbb' or a CSS colour name, glow: true (lit by itself) }.
   m.box(w, h, d, opts)
   m.sphere(r, opts)
@@ -30,7 +40,7 @@ Every shape takes opts { at: [x, y, z] (its centre), rot: [rx, ry, rz] (radians,
   m.tube([[x, y, z], ...], r, opts)      a bendy tube through the points
   m.part(name, { at, rot }, () => { ... })   shapes made inside belong to a named part pivoting at at (their coordinates are from the pivot); code turns it with me.pose(name, [rx, ry, rz])
   m.anchor(name, [x, y, z])              a named point
-At most 400 shapes. Each is drawn as given and smoothly lit: a round shape with about a dozen sides round (a tube six), while a model's box, the ends of a cylinder and an outline made thick, at its rim and between its points, keep sharp edges, and where shapes meet nothing is blended. Seen from within, a shape can be invisible, so a surface seen from within needs a thickness of its own. Model the real form in its true proportions: round where it is round, curved where it curves, thin parts thin, and edges as soft or as sharp as the real ones, a soft edge rounded into the outline or profile. Make each form with the shape that makes it, a curve with enough points to look smooth; a box only for what really is a block.`
+At most 400 shapes. ${DRAWN[drawing]} Seen from within, a shape can be invisible, so a surface seen from within needs a thickness of its own. Model the real form in its true proportions: round where it is round, curved where it curves, thin parts thin, and edges as soft or as sharp as the real ones, a soft edge rounded into the outline or profile. Make each form with the shape that makes it, a curve with enough points to look smooth; a box only for what really is a block.`
 
 export const THING_DOC = `THING CODE: the body of  function (me, w) { ... }
 It runs once, when the thing comes out of its crate. Keep whatever it remembers in your own variables, then return its handlers, any of:
@@ -138,7 +148,7 @@ Whoever picks it up reads its name and one line telling how to use it (click, ho
 
 Write plain code that works the first time, and be quick: the crate opens about ${DESIGN_LIMIT - 10} seconds from now. Use only what is described below.
 
-${MODEL_DOC}
+${modelDoc('drawn')}
 A thing held in the hand is built with the hand at the origin and its front (what points at a target) toward +z, at a size that reads well in a hand. A thing that is ridden is built standing on y = 0 with the rider's feet at the origin, front toward +z.
 
 ${THING_DOC}`
@@ -188,8 +198,9 @@ The look: height (1.5 to 2.05 m), build (0.8 thin to 1.3 round), the colours ski
 A part is model code, built in its slot's frame on a standard doctor ${BODY.height} m tall (the game scales it to the doctor):
 ${frames}
 
-${MODEL_DOC}
+${modelDoc('worn')}
 Nothing turns a worn part's named parts by code: each hangs from its pivot and swings, sways and bends as the doctor moves, turns, lands, falls and bends over, pulled by the world, the more freely the further its weight hangs from the pivot, and springs back to how it was made. A part made inside another swings on from it, so a chain of parts bends along its length. Make whatever would move on a real body as parts pivoting where it is fixed, and leave what is stiff as plain shapes.
+The doctor under them is soft and rounded, a lab coat over a fitted trunk: model a part as it would sit on such a body, resting on its curves where it touches it, cloth thin and curving round it or falling in folds where it hangs, its ends and edges as soft as the real ones.
 Parts are seen from a few metres away: make the shapes that say what it is clear and bold. Hair and hats leave the eyes free unless the words say otherwise. Write short, plain code that works the first time.`
 
 export interface WearAnswer {
@@ -257,7 +268,7 @@ Make it as rich in detail as a real place, never a set of plain blocks: every su
 
 ${ARENA_DOC}
 
-${MODEL_DOC}
+${modelDoc('drawn')}
 
 The world w, as things see it:
 ${THING_DOC.slice(THING_DOC.indexOf('w:\n'))}
@@ -289,7 +300,7 @@ export function arenaMessage(req: { avoid: string[]; fix: { answer: ArenaAnswer;
  * The taunts are modern English, written for a friend hearing them once in the fight (2026-11-11:
  * "taunts are difficult to understand. perhaps use modern english still"), and mostly in the
  * heated tones, as the doctors are fighting. Why this prompt and not the others tried is in
- * plans/dissertation.md.
+ * design.md.
  */
 export const LINES_SYSTEM = {
   taunt: `You write taunts for Dissertation, a silly brawl between mad doctors defending their theses, played at a party by friends who speak English well as a second language. A taunt is what a doctor shouts at the others in the heat of the fight, as they knock each other about. Every doctor is a modern academic of towering self-importance: certain of their own genius, grand about all they have done, and openly sorry for everyone less brilliant, which is everyone. That grandeur is the joke, and it is silly rather than hurtful. It is heard once, over the noise of the fight, so it makes one clear point at one hearing, with the word that lands it at the end of its phrase, in the plain, everyday English of today, as people really talk, in words everyone knows, scholar or not. It is short, at most 7 words in all. Most are said in two phrases, each in a different tone, and some in one. Each phrase is said on its own, so it is complete in itself: words written as they are said aloud, every one a real word, never a sound spelled out, with its own punctuation. The doctors are fighting, so their phrases are said hot, each in the hot tone that fits its words: booming, a pronouncement, low and slow; indignant, affronted, higher and quicker; gloating, chuckling at the others. A cool tone only sets off a hot one in the same line: sniffy, haughty and drawn out; hushed, an aside; plain. Each line does something different from the others and from any listed, in its shape as much as in its subject.`,

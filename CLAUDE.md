@@ -6,9 +6,9 @@ Canonical project rules are in **`.cursor/rules/`** (plus root **`.cursorrules`*
 
 - `.cursor/rules/maintain-canonical-rules.mdc`: keeping rules in sync; user corrections and redirects
 - `.cursor/rules/coding-style.md`: languages, tooling, engineering defaults
-- `.cursor/rules/plans.md`: where plan files live and how they evolve
+- `.cursor/rules/plans.md`: the one design document (`design.md`) and how it evolves
 
-Dissertation is a first-person party brawl for adults at a LAN party: mad doctors defend their theses, with credibility for health. The game runs on the host's computer inside the Vite dev server (Rapier physics, a WebSocket for the local network only) and the players' browsers only draw. Opus builds each round's arena, makes whatever a player writes into a crate from the sky, and dresses doctors from words; Haiku writes taunts and thesis titles, and Kokoro-82M on the host says the taunts in each doctor's voice. The brief is `design.md`, how to run and play it is in `README.md`, and the decisions and open work are in `plans/dissertation.md`.
+Dissertation is a first-person party brawl for adults at a LAN party: mad doctors defend their theses, with credibility for health. The game runs on the host's computer inside the Vite dev server (Rapier physics, a WebSocket for the local network only) and the players' browsers only draw. Opus builds each round's arena, makes whatever a player writes into a crate from the sky, and dresses doctors from words; Haiku writes taunts and thesis titles, and Kokoro-82M on the host says the taunts in each doctor's voice. The brief, the decisions and the open work are in `design.md`; how to run and play it is in `README.md`.
 
 - **`src/server/`**: the game server, started by the Vite plugin (`plugin.ts`); the models through the Claude Code CLI (`opus.ts`, `prompts.ts`, `claude.ts`); the doctors' voices (`voice.ts`, speaking in `voice-worker.ts`); the library on disk (`store.ts`).
 - **`src/sim/`**: the simulation on Rapier, the API made code calls (`api.ts`), and running made code (`sandbox.ts`, `guard.ts`).

@@ -1,12 +1,12 @@
 /**
- * Clothes that move: worn parts swinging from their pivots (swing.ts) and the coat's panels
- * bending (doctor.ts), without a browser.
+ * Clothes that move: worn parts swinging from their pivots (swing.ts) and the coat's skirt
+ * draped by its springs (figure.ts), without a browser.
  */
-import { BufferAttribute, BufferGeometry, Group, Vector3 } from 'three'
+import { BufferGeometry, Group, Vector3 } from 'three'
 import { describe, expect, it } from 'vitest'
 
 import { buildRecipe, type Kit } from '../model/kit'
-import { bendPanel } from './doctor'
+import { BEND_FROM, SKIRT, SPRINGS, drape } from './figure'
 import { Swing, type Fence } from './swing'
 
 /** A model's part groups on a doctor's root, as ModelInstance makes them, and its swing. */
@@ -136,39 +136,60 @@ describe('worn parts', () => {
 })
 
 describe('the coat', () => {
-  /** A strip of cloth down a panel's middle, waist to hem, facing out. */
-  function strip(): BufferGeometry {
-    const g = new BufferGeometry()
-    const ys = Array.from({ length: 30 }, (_, i) => -i * 0.02)
-    g.setAttribute('position', new BufferAttribute(new Float32Array(ys.flatMap((y) => [0, y, 0])), 3))
-    g.setAttribute('normal', new BufferAttribute(new Float32Array(ys.flatMap(() => [0, 0, 1])), 3))
-    return g
-  }
-  const points = (g: BufferGeometry, name: string) => {
-    const a = g.getAttribute(name)
-    return Array.from({ length: a.count }, (_, i) => new Vector3(a.getX(i), a.getY(i), a.getZ(i)))
-  }
+  const rest = SKIRT.geometry.getAttribute('position')
+  const at = (g: BufferGeometry, i: number) => new Vector3().fromBufferAttribute(g.getAttribute('position'), i)
+  const still = SPRINGS.map(() => ({ angle: 0, bend: 0 }))
+  /** The cloth straight down the back, waist to hem, as made. */
+  const back = Array.from({ length: rest.count }, (_, i) => i)
+    .filter((i) => Math.abs(SKIRT.theta[i]! - Math.PI) < 0.03 && SKIRT.out[i]! > -0.001 && Math.abs(at(SKIRT.geometry, i).x) < 0.01)
+    .sort((a, b) => SKIRT.below[a]! - SKIRT.below[b]!)
+  const length = (g: BufferGeometry) => back.slice(1).reduce((sum, i, k) => sum + at(g, i).distanceTo(at(g, back[k]!)), 0)
 
-  it('bends out below the pockets, keeping its length and its cloth facing out', () => {
-    const rest = strip()
-    const out = rest.clone()
-    bendPanel(out, rest, 0)
-    expect(points(out, 'position')).toEqual(points(rest, 'position'))
-    bendPanel(out, rest, 0.7)
-    const p = points(out, 'position')
-    const r = points(rest, 'position')
-    p.forEach((v, i) => {
-      if (r[i]!.y >= -0.3) expect(v.distanceTo(r[i]!)).toBeLessThan(1e-6)
-    })
-    expect(p.at(-1)!.z).toBeGreaterThan(0.05)
-    let length = 0
-    for (let i = 1; i < p.length; i++) length += p[i]!.distanceTo(p[i - 1]!)
-    expect(length).toBeCloseTo(0.58, 2)
-    // Each normal stays a unit across the cloth's run.
-    const n = points(out, 'normal')
-    for (let i = 1; i < p.length; i++) {
-      expect(n[i]!.length()).toBeCloseTo(1, 5)
-      expect(Math.abs(n[i]!.dot(p[i]!.clone().sub(p[i - 1]!).normalize()))).toBeLessThan(0.05)
+  it('hangs as made while its springs are still', () => {
+    const out = SKIRT.geometry.clone()
+    drape(out, SKIRT, still)
+    for (let i = 0; i < rest.count; i++) expect(at(out, i).distanceTo(at(SKIRT.geometry, i))).toBeLessThan(1e-6)
+  })
+
+  it('bends out below the pockets, keeping its length', () => {
+    expect(back.length).toBeGreaterThan(10)
+    const out = SKIRT.geometry.clone()
+    drape(out, SKIRT, SPRINGS.map(() => ({ angle: 0, bend: 0.7 })))
+    for (const i of back) if (SKIRT.below[i]! <= BEND_FROM) expect(at(out, i).distanceTo(at(SKIRT.geometry, i))).toBeLessThan(1e-6)
+    const hem = back.at(-1)!
+    expect(-at(out, hem).z + at(SKIRT.geometry, hem).z).toBeGreaterThan(0.05)
+    expect(length(out)).toBeCloseTo(length(SKIRT.geometry), 2)
+  })
+
+  it('swings out round one spring, the cloth going smoothly to the still ones', () => {
+    const out = SKIRT.geometry.clone()
+    drape(out, SKIRT, SPRINGS.map((_, i) => ({ angle: i === 0 ? 0.5 : 0, bend: 0 })))
+    /** How far the hem moved at a polar angle. */
+    const moved = (θ: number) => {
+      let best = -1
+      for (let i = 0; i < rest.count; i++) if (Math.abs(SKIRT.below[i]! - 0.58) < 0.001 && SKIRT.out[i]! > -0.001 && (best < 0 || Math.abs(SKIRT.theta[i]! - θ) < Math.abs(SKIRT.theta[best]! - θ))) best = i
+      return at(out, best).distanceTo(at(SKIRT.geometry, best))
     }
+    // Swung as a whole on its own side of the front: the hem 0.58 m below the waist moves about 0.58 * 2 sin(0.25).
+    expect(moved(SPRINGS[0]!)).toBeCloseTo(0.58 * 2 * Math.sin(0.25), 1)
+    expect(moved(0.3)).toBeCloseTo(moved(SPRINGS[0]!), 2)
+    const between = moved((SPRINGS[0]! + SPRINGS[1]!) / 2)
+    expect(between).toBeGreaterThan(0.05)
+    expect(between).toBeLessThan(moved(SPRINGS[0]!) - 0.05)
+    expect(moved(SPRINGS[2]!)).toBeLessThan(1e-6)
+    expect(moved(SPRINGS[3]!)).toBeLessThan(1e-6)
+  })
+
+  it('keeps its cloth facing out as it flares', () => {
+    const out = SKIRT.geometry.clone()
+    drape(out, SKIRT, SPRINGS.map((_, i) => ({ angle: 0.3 + 0.1 * i, bend: 0.4 })))
+    const n = out.getAttribute('normal')
+    let outward = 0
+    for (const i of back) {
+      const normal = new Vector3().fromBufferAttribute(n, i)
+      expect(normal.length()).toBeCloseTo(1, 5)
+      if (normal.z < 0) outward++
+    }
+    expect(outward).toBe(back.length)
   })
 })
