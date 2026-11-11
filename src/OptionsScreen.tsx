@@ -185,7 +185,15 @@ export function OptionsScreen() {
             <section>
               <h3>Controls</h3>
               <Row label="Mouse sensitivity">
-                <Slider value={o.sensitivity} min={0.0006} max={0.006} step={0.0001} show={`${(o.sensitivity / DEFAULT_SENSITIVITY).toFixed(2)}×`} onChange={(v) => set({ sensitivity: v })} />
+                {/* On a log scale, a quarter to ten times the default, so the slow end keeps its fine steps. */}
+                <Slider
+                  value={Math.log(o.sensitivity / DEFAULT_SENSITIVITY)}
+                  min={Math.log(0.25)}
+                  max={Math.log(10)}
+                  step={0.01}
+                  show={`${(o.sensitivity / DEFAULT_SENSITIVITY).toFixed(2)}×`}
+                  onChange={(v) => set({ sensitivity: DEFAULT_SENSITIVITY * Math.exp(v) })}
+                />
               </Row>
               <Row label="Invert mouse" hint="Moving the mouse up looks down">
                 <Check value={o.invertY} onChange={(v) => set({ invertY: v })} />

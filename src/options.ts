@@ -82,7 +82,7 @@ const oneOf = <T extends string>(v: unknown, all: readonly T[], def: T): T => (a
 function clean(o: Options): Options {
   const d = defaults()
   return {
-    sensitivity: clamp(o.sensitivity, 0.0004, 0.008, d.sensitivity),
+    sensitivity: clamp(o.sensitivity, d.sensitivity / 4, d.sensitivity * 10, d.sensitivity),
     invertY: o.invertY === true,
     fov: clamp(o.fov, 55, 110, d.fov),
     resolution: clamp(o.resolution, 0.5, 1, d.resolution),
