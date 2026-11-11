@@ -1,4 +1,4 @@
-/** The rules of play: bare hands under a budget, one control rule, falls put down to whoever caused them, what the referee says, and whose a crate is. */
+/** The rules of play: bare hands under a budget, one control rule, falls put down to whoever caused them, what the referee says, whose a crate is, and a thing's uses. */
 
 import { beforeAll, describe, expect, it } from 'vitest'
 
@@ -9,8 +9,8 @@ import { Bot } from './bots'
 import { LECTURE_HALL } from './hall'
 import { compile } from './sandbox'
 import { Sim, initPhysics, type Doctor } from './sim'
-import { hall, pair, press, steps } from './testkit'
-import { STARTERS, compileThing, type ThingDesign } from './things'
+import { hall, holdDown, pair, press, steps } from './testkit'
+import { STARTERS, compileThing, trialThing, type ThingDesign } from './things'
 
 beforeAll(async () => {
   await initPhysics()
@@ -114,7 +114,8 @@ describe('the control rule', () => {
   function heldShare(code: string, hand: 'use' | 'alt'): number {
     const sim = hall()
     const [a, b] = pair(sim, 4)
-    sim.newThing(compileThing(thing('control', code)), a, a.pos)
+    // The rule, not the thing's uses: it never runs out here.
+    sim.newThing(compileThing(thing('control', code)), a, a.pos).left = Infinity
     let held = 0
     const n = 30 * 60
     for (let i = 0; i < n; i++) {
@@ -198,7 +199,7 @@ describe('the control rule', () => {
     const sim = hall()
     const [a, b] = pair(sim, 4)
     const trip = thing('trip', `return { use() { for (const d of w.others()) { w.topple(d, [0, 3, 0]); w.teleport(d, d.pos) } } }`)
-    sim.newThing(compileThing(trip), a, a.pos)
+    sim.newThing(compileThing(trip), a, a.pos).left = Infinity
     let floored = 0
     let since = b.ragSince
     for (let i = 0; i < 10 * 60; i++) {
@@ -392,7 +393,7 @@ describe('crates', () => {
     place(sim, b, [c.p[0] + 0.8, c.p[1] - 0.45, c.p[2]], -Math.PI / 2)
     const loose = sim.newThing(kind(), null, [c.p[0] + 1.2, c.p[1], c.p[2] + 0.8])
     steps(sim, 30)
-    sim.fillCrate(c.id, kind(), { archive: false, genie: true, curse: 'Speak only in rhyme.' })
+    sim.fillCrate(c.id, kind(), { archive: false, genie: true, again: null, curse: 'Speak only in rhyme.' })
     expect(c.state).toBe('ready')
     expect(sim.snapshot().crates[0]).toMatchObject({ ask: 'a sword that sings', archive: false, ownerUntil: expect.closeTo(c.readyAt! + CRATE_OWNER_ONLY, 3) })
     // Not yet b's: E takes the loose thing instead.
@@ -409,7 +410,7 @@ describe('crates', () => {
     const events = record(sim, 2)
     expect(sim.crates.size).toBe(0)
     expect(of(events, 'opened')).toEqual([
-      { type: 'opened', crate: c.id, by: 'b', owner: 'a', thing: STARTERS[0]!.name, ask: 'a sword that sings', genie: true, archive: false, curse: 'Speak only in rhyme.' },
+      { type: 'opened', crate: c.id, by: 'b', owner: 'a', thing: STARTERS[0]!.name, ask: 'a sword that sings', genie: true, again: null, archive: false, curse: 'Speak only in rhyme.' },
     ])
   })
 
@@ -489,5 +490,96 @@ describe('crates', () => {
     }
     expect(all).toBeGreaterThan(100)
     expect(inView / all).toBeGreaterThan(0.95)
+  })
+})
+
+describe('a thing’s uses', () => {
+  it('a press that does something costs one, one while it reloads none, the other use one; the last leaves the hand empty and says so', () => {
+    const sim = hall()
+    const [a] = pair(sim, 4)
+    const gun = { ...thing('gun', `let ready = 0\nreturn {\n  use() { if (w.time < ready) return; ready = w.time + 1; w.sound(me.pos(), 'bang') },\n  alt() { w.text(me.pos(), 'other', '#ffffff') }\n}`), uses: 3 }
+    const t = sim.newThing(compileThing(gun), a, a.pos)
+    press(a, 'use')
+    steps(sim, 2)
+    expect(t.left).toBe(2)
+    // Still reloading: the press does nothing and costs nothing.
+    press(a, 'use')
+    steps(sim, 2)
+    expect(t.left).toBe(2)
+    press(a, 'alt')
+    steps(sim, 2)
+    expect(sim.me('a').hands[0]!.left).toBe(1)
+    steps(sim, 60)
+    press(a, 'use')
+    const told = record(sim, 2)
+    expect(told).toContainEqual({ type: 'usedUp', who: 'a', thing: gun.name })
+    expect(a.hands[0]).toBe(null)
+    expect(sim.me('a').hands[0]).toBe(null)
+    expect(sim.snapshot().things.some((x) => x.id === t.id)).toBe(false)
+    // Its hand is empty again: a press shoves.
+    press(a, 'use')
+    expect(record(sim, 2)).toContainEqual({ type: 'act', who: 'a', act: 'shove', hand: 0 })
+  })
+
+  it('held, it costs one more for each further second it does something; readied in silence and let go, one', () => {
+    const sim = hall()
+    const [a] = pair(sim, 4)
+    const hose = sim.newThing(compileThing({ ...thing('hose', `return { hold() { w.puff(me.pos(), { size: 0.2 }) } }`), uses: 10 }), a, a.pos)
+    press(a, 'use')
+    holdDown(a, true)
+    steps(sim, Math.round(3.5 * 60))
+    holdDown(a, false)
+    steps(sim, 2)
+    expect(hose.left).toBe(10 - 4)
+    sim.dropHeld(a)
+    const bow = sim.newThing(compileThing({ ...thing('bow', `let drawn = 0\nreturn { use() { drawn = w.time }, release() { w.sound(me.pos(), 'whoosh', 1, Math.min(1, w.time - drawn)) } }`), uses: 10 }), a, a.pos)
+    press(a, 'use')
+    holdDown(a, true)
+    steps(sim, Math.round(2.5 * 60))
+    expect(bow.left).toBe(10)
+    holdDown(a, false)
+    steps(sim, 2)
+    expect(bow.left).toBe(9)
+  })
+
+  it('what its last use set going plays out, put down to whoever used it, unseen and out of reach, and then it is gone', () => {
+    const sim = hall()
+    const [a, b] = pair(sim, 4)
+    const sling = thing('sling', `return { use() { w.spawn({ shape: 'ball', size: 0.3, at: [0, 1.2, 1.2], vel: [0, 0, 6], gravity: 0, mass: 1, life: 4, hit(t, ball) { if (t.doctor) { w.hurt(t.doctor, 5); ball.remove() } } }) } }`)
+    const t = sim.newThing(compileThing(sling), a, a.pos)
+    t.left = 1
+    press(a, 'use')
+    const told = record(sim, 120)
+    expect(a.hands[0]).toBe(null)
+    expect(told).toContainEqual(expect.objectContaining({ type: 'hit', victim: 'b', by: 'a', amount: 5 }))
+    expect(b.cred).toBe(START_CRED - 5)
+    // Lingering a while, unseen, and nobody can pick it up.
+    expect(sim.things.has(t.id)).toBe(true)
+    expect(sim.snapshot().things).toEqual([])
+    press(a, 'pick')
+    steps(sim, 2)
+    expect(a.hands).toEqual([null, null])
+    steps(sim, 70)
+    expect(sim.things.has(t.id)).toBe(false)
+  })
+
+  it('code may read what is left and spend it at once', () => {
+    const sim = hall()
+    const [a] = pair(sim, 4)
+    const fuse = { ...thing('fuse', `return { use() { w.text(me.pos(), 'left ' + me.left(), '#ffffff') }, alt() { me.spend() } }`), uses: 5 }
+    sim.newThing(compileThing(fuse), a, a.pos)
+    press(a, 'use')
+    expect(record(sim, 2)).toContainEqual(expect.objectContaining({ type: 'text', text: 'left 5' }))
+    press(a, 'alt')
+    expect(record(sim, 2)).toContainEqual({ type: 'usedUp', who: 'a', thing: fuse.name })
+    expect(a.hands[0]).toBe(null)
+  })
+
+  it('is given by the design, within USES, and never runs out in the trial', () => {
+    expect(() => compileThing({ ...STARTERS[0]!, uses: 0 })).toThrow(/uses 0 is not/)
+    expect(() => compileThing({ ...STARTERS[0]!, uses: 2.5 })).toThrow(/uses 2.5 is not/)
+    // Three uses would be spent before the trial throws it, and its throw is what fails.
+    const late = { ...thing('late', `return { use() { w.sound(me.pos(), 'bang') }, hold() { w.sound(me.pos(), 'hum') }, alt() { w.sound(me.pos(), 'zap') }, thrown() { const o = null; o.x = 1 } }`), uses: 3 }
+    expect(trialThing(compileThing(late))).toEqual([expect.stringContaining('thrown:')])
   })
 })

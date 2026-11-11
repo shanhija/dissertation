@@ -25,7 +25,7 @@ it('E at a crate still only its asker’s says whose it is and for how long; the
   const sim = hall()
   const [a, b] = pair(sim, 6)
   const c = sim.dropCrate('a', 'a lamp')!
-  sim.fillCrate(c.id, compileThing(STARTERS[0]!), { archive: false, genie: true, curse: null })
+  sim.fillCrate(c.id, compileThing(STARTERS[0]!), { archive: false, genie: true, again: null, curse: null })
   steps(sim, 60 * 3 + 5)
   expect(c.state).toBe('ready')
   sim.teleport(b, [c.p[0] + 0.8, c.p[1] - 0.45, c.p[2]])
@@ -39,7 +39,7 @@ it('E at a crate still only its asker’s says whose it is and for how long; the
   steps(sim, CRATE_OWNER_ONLY * 60)
   press(b, 'pick')
   expect(told(sim, 2, 'notYet')).toEqual([])
-  expect(sim.me('b').hands[0]).toEqual({ name: STARTERS[0]!.name, description: STARTERS[0]!.description, budget: STARTERS[0]!.budget, origin: { by: 'a', ask: 'a lamp', genie: true, archive: false } })
+  expect(sim.me('b').hands[0]).toEqual({ name: STARTERS[0]!.name, description: STARTERS[0]!.description, budget: STARTERS[0]!.budget, left: STARTERS[0]!.uses, origin: { by: 'a', ask: 'a lamp', genie: true, again: null, archive: false } })
   // A thing from no crate came from nowhere in particular.
   sim.newThing(compileThing(STARTERS[1]!), a, a.pos)
   expect(sim.me('a').hands[0]!.origin).toBe(null)

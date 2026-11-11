@@ -20,6 +20,7 @@ import {
   READY_WAIT,
   REQUEST_COOLDOWN,
   SLOTS,
+  USES,
   VOICES,
   type ArenaStatus,
   type ClientMsg,
@@ -135,9 +136,15 @@ interface Bring {
   ask: string | null
   genie: boolean
   /** Its design, once started. */
-  design: Promise<ThingKind> | null
+  design: Promise<Designed> | null
   /** Its crate's job, once the round has begun. */
   job: CrateJob | null
+}
+
+/** A thing designed from a request, and the thing had already this match the words asked for, when they did (it was made as something else). */
+interface Designed {
+  kind: ThingKind
+  again: string | null
 }
 
 /** Seconds a player who dropped out (a page reloaded, the network blinked) keeps their doctor in the round, to come back to. */
@@ -212,6 +219,16 @@ export class Game {
   private jobs: CrateJob[] = []
   /** This break's things brought to a defence, in the order their players were Ready. */
   private brings: Bring[] = []
+  /**
+   * What has come this match: every thing designed (with the words it was asked in, null for the
+   * button) or drawn from the archive. Nothing comes twice in a match (2026-11-11: "perhaps one
+   * weapon can only be typed once in a game, and you won't get it again"): typed words are designed
+   * against what was designed (nobody chose what the archive gave), and the archive draws what has
+   * not come.
+   */
+  private had: { id: string; name: string; ask: string | null; drawn: boolean }[] = []
+  /** Typed words being designed now: listed with the next words as counting as had, so two asking at once do not both get it. */
+  private asking: string[] = []
   private lobbyDirty = true
   /** The lobby's timer as last sent, to send it again whenever it counts down. */
   private sentTimer: number | null = null
@@ -664,7 +681,7 @@ export class Game {
     this.note(p, `${capital(this.deps.designers.next())} is designing it.`)
     const design = this.designThing({ ask, by: p.name, curse, genie, aside }, () => job.deadline, () => this.sentBack(job))
     design.catch((err: Error) => this.deps.log(`design for ${p.name}: ${err.message}`))
-    this.follow(job, design, { archive: false, genie, curse })
+    this.follow(job, design, { genie, curse })
   }
 
   /** A crate the player asked for in this round is still coming or unopened (the one brought to their defence counts for nothing). */
@@ -677,10 +694,11 @@ export class Game {
    * archive's thing filled the crate, in its place while nobody has opened it; from the archive
    * when the design fails.
    */
-  private follow(job: CrateJob, design: Promise<ThingKind>, made: Made): void {
+  private follow(job: CrateJob, design: Promise<Designed>, how: { genie: boolean; curse: string | null }): void {
     design.then(
-      (kind) => {
-        if (!job.filled) return this.fill(job, kind, made, `Ready: ${kind.name}.`)
+      ({ kind, again }) => {
+        const made: Made = { archive: false, genie: how.genie, again, curse: how.curse }
+        if (!job.filled) return this.fill(job, kind, made, again ? `Ready: ${kind.name}. ${again} was had already this match.` : `Ready: ${kind.name}.`)
         const p = this.players.get(job.player)
         if (job.sim === this.sim && job.sim.crates.has(job.crate)) {
           job.sim.fillCrate(job.crate, kind, made)
@@ -709,11 +727,16 @@ export class Game {
     if (p) this.note(p, `It failed its trial and went back to be fixed: ${FIX_GRACE} s more.`)
   }
 
-  /** A thing from the archive, at random: one that will not compile is logged and left out of it. */
+  /**
+   * A thing from the archive, at random, one not had this match while there is one: one that will
+   * not compile is logged and left out of it.
+   */
   private fallbackKind(): ThingKind {
     for (;;) {
-      const ids = [...this.archive.keys()]
-      if (!ids.length) throw new Error('nothing in the archive compiles')
+      const all = [...this.archive.keys()]
+      if (!all.length) throw new Error('nothing in the archive compiles')
+      const fresh = all.filter((id) => !this.had.some((h) => h.id === id))
+      const ids = fresh.length ? fresh : all
       const id = ids[Math.floor(this.deps.random() * ids.length)]!
       let kind = this.kinds.get(id)
       if (!kind) {
@@ -726,6 +749,7 @@ export class Game {
         }
         this.kinds.set(id, kind)
       }
+      this.had.push({ id, name: kind.name, ask: null, drawn: true })
       return kind
     }
   }
@@ -736,50 +760,60 @@ export class Game {
    * crate waits for it yet), for the picker to judge the model by; onFix is called when a first
    * try goes back to be fixed (before the second is asked).
    */
-  private async designThing(req: { ask: string | null; by: string; curse: string | null; genie: boolean; aside: boolean }, deadline: () => number | null, onFix: () => void): Promise<ThingKind> {
+  private async designThing(req: { ask: string | null; by: string; curse: string | null; genie: boolean; aside: boolean }, deadline: () => number | null, onFix: () => void): Promise<Designed> {
     const designers = this.deps.designers!
     const { ask, by, curse, genie, aside } = req
     const avoid = ask === null ? [...this.archive.values()].map((d) => d.name) : []
+    const had = ask === null ? [] : this.had.filter((h) => !h.drawn).map((h) => (h.ask === null ? h.name : `${h.name} (asked as ${JSON.stringify(h.ask)})`))
+    const making = ask === null ? [] : [...this.asking]
+    if (ask !== null) this.asking.push(ask)
     const t0 = this.now()
-    let fix: { answer: ThingAnswer; problems: string[] } | null = null
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (fix) onFix()
-      const until = deadline()
-      const a = await designers.thing(thingMessage({ ...req, avoid, fix }), THING_TIMEOUT, until === null ? null : Math.max(0, Math.round((until - this.now()) * 1000)))
-      const answer = a.data
-      const id = this.deps.store.freeId('things', String(answer.name || 'thing'))
-      const design: ThingDesign = {
-        id,
-        name: String(answer.name).slice(0, 60),
-        description: String(answer.description).slice(0, 200),
-        budget: answer.budget === 20 ? 20 : 10,
-        look: String(answer.look),
-        code: String(answer.code),
-        ask: ask ?? '',
-        by,
-        random: ask === null,
-        model: a.model,
-        ms: Math.round((this.now() - t0) * 1000),
-        made: new Date().toISOString(),
+    try {
+      let fix: { answer: ThingAnswer; problems: string[] } | null = null
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (fix) onFix()
+        const until = deadline()
+        const a = await designers.thing(thingMessage({ ...req, avoid, had, making, fix }), THING_TIMEOUT, until === null ? null : Math.max(0, Math.round((until - this.now()) * 1000)))
+        const answer = a.data
+        const id = this.deps.store.freeId('things', String(answer.name || 'thing'))
+        const again = ask !== null && answer.again.trim() ? answer.again.trim().slice(0, 60) : null
+        const design: ThingDesign = {
+          id,
+          name: String(answer.name).slice(0, 60),
+          description: String(answer.description).slice(0, 200),
+          budget: answer.budget === 20 ? 20 : 10,
+          uses: Math.min(USES[1], Math.max(USES[0], Math.round(Number(answer.uses)))),
+          look: String(answer.look),
+          code: String(answer.code),
+          ask: ask ?? '',
+          by,
+          random: ask === null,
+          model: a.model,
+          ms: Math.round((this.now() - t0) * 1000),
+          made: new Date().toISOString(),
+        }
+        let problems: string[]
+        let kind: ThingKind | null = null
+        try {
+          kind = compileThing(design)
+          problems = trialThing(kind)
+        } catch (err) {
+          problems = [(err as Error).message]
+        }
+        this.deps.store.append({ kind: 'thing', by, ask, curse, genie, aside, again, model: a.model, ms: design.ms, id, name: design.name, uses: design.uses, problems, ...(problems.length ? { look: design.look, code: design.code } : {}) })
+        if (problems.length === 0 && kind) {
+          this.deps.store.saveThing(design)
+          this.archive.set(id, design)
+          this.kinds.set(id, kind)
+          this.had.push({ id, name: design.name, ask, drawn: false })
+          return { kind, again }
+        }
+        fix = { answer, problems: problems.slice(0, 8) }
       }
-      let problems: string[]
-      let kind: ThingKind | null = null
-      try {
-        kind = compileThing(design)
-        problems = trialThing(kind)
-      } catch (err) {
-        problems = [(err as Error).message]
-      }
-      this.deps.store.append({ kind: 'thing', by, ask, curse, genie, aside, model: a.model, ms: design.ms, id, name: design.name, problems, ...(problems.length ? { look: design.look, code: design.code } : {}) })
-      if (problems.length === 0 && kind) {
-        this.deps.store.saveThing(design)
-        this.archive.set(id, design)
-        this.kinds.set(id, kind)
-        return kind
-      }
-      fix = { answer, problems: problems.slice(0, 8) }
+      throw new Error('no design passed its trial')
+    } finally {
+      if (ask !== null) this.asking.splice(this.asking.indexOf(ask), 1)
     }
-    throw new Error('no design passed its trial')
   }
 
   // ---------------------------------------------------------------------------- brought to a defence
@@ -861,7 +895,7 @@ export class Game {
     p.defence = crate.id
     b.job = { crate: crate.id, sim, deadline, filled: false, player: p.id }
     this.jobs.push(b.job)
-    this.follow(b.job, b.design!, { archive: false, genie: b.genie, curse: null })
+    this.follow(b.job, b.design!, { genie: b.genie, curse: null })
   }
 
   // ---------------------------------------------------------------------------- reviews
@@ -1186,6 +1220,7 @@ export class Game {
       case 'matchEnd':
         if (now >= this.phaseUntil) {
           for (const p of this.players.values()) p.wins = 0
+          this.had = []
           this.roomWins = null
           this.toDressing()
         }

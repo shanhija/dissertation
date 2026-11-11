@@ -6,10 +6,10 @@
  */
 
 import { BODY, SLOT_FRAMES } from '../doctor'
-import { BUDGET_WINDOW, BUDGETS, CRATE_OWNER_ONLY, DESIGN_LIMIT, GAITS, HIT_CAP, HOLD_MAX, MATERIALS, PER_SECOND_CAP, SLOTS, SOUNDS, type ArenaSetting, type Gait, type Look } from '../protocol'
+import { BUDGET_WINDOW, BUDGETS, CRATE_OWNER_ONLY, DESIGN_LIMIT, GAITS, HIT_CAP, HOLD_MAX, MATERIALS, PER_SECOND_CAP, SLOTS, SOUNDS, USES, type ArenaSetting, type Gait, type Look } from '../protocol'
 import { SOFT } from '../model/mesh'
 import { DOCTOR_MASS } from '../sim/forces'
-import { FLOP, MAX_SIGHTS_PER_SOURCE } from '../sim/sim'
+import { FLOP, MAX_FIELDS_PER_SOURCE, MAX_SIGHTS_PER_SOURCE, MAX_TIES_PER_SOURCE, MAX_ZONES_PER_SOURCE } from '../sim/sim'
 import { TONE_NAMES } from './voice'
 
 export type Schema = Record<string, unknown>
@@ -67,7 +67,8 @@ me:
   me.resize(k)           draws it k times its size
   me.dealt(doctor)       what it has taken from that doctor in the last ${BUDGET_WINDOW} s;  me.budget, what it may take from one doctor in any ${BUDGET_WINDOW} s
   me.drop()              its holder lets go of it
-  me.spend()             it is used up and gone
+  me.left()              the uses it has left
+  me.spend()             it is used up now: it leaves the hand, and what it set going plays out
 
 w:
   w.time                 seconds since the round started
@@ -79,8 +80,8 @@ w:
   w.push(doctor or body, [x, y, z])        adds speed. A doctor knocked at ${FLOP} m/s or more is knocked flat: they tumble as a ragdoll and get up when they come to rest.
   w.topple(doctor, [x, y, z])   knocks them flat at any speed, thrown at that velocity (within 1.5 s of getting up, or after shaking a hold off, only pushed)
   w.blast(at, radius, speed)    throws everyone and everything within radius away from at (doctors, bodies, loose things; not the holder): speed m/s at the middle, falling to nothing at the edge, lighter bodies flying faster; the arena shelters what is behind it, and what of the arena can break, it strikes. Returns [{ doctor, strength 0..1 }] for the doctors it reached; it takes no credibility by itself.
-  w.field({ at, radius, follow, secs, pull, swirl, lift, wind, drag })   a space that keeps moving whatever is inside it (doctors, bodies, loose things; not the holder), each in m/s²: pull toward its middle (below 0 pushes out), swirl round it, lift up (over 20 lifts a doctor off their feet), wind a push [x, y, z], drag slows. follow as a zone's, or a doctor. secs 5, at most 30. Returns { set(spec), alive(), remove() }.
-  w.tie(a, b, { length, spring, secs, color, width })   a rope between two of: a doctor (at their chest), a body, me (the hand that holds it, so it pulls the holder), or a point [x, y, z]. It never lets them get further apart than length (the distance now, by default); spring 0..1 makes it pull and push back toward its length, softly to stiffly. The heavier end moves less. Drawn sagging when slack, in color and width (color false: not drawn). secs 10, at most 30. Returns { length(), setLength(l), distance() (how far apart its ends are now), alive(), remove() }.
+  w.field({ at, radius, follow, secs, pull, swirl, lift, wind, drag })   a space that keeps moving whatever is inside it (doctors, bodies, loose things; not the holder), each in m/s²: pull toward its middle (below 0 pushes out), swirl round it, lift up (over 20 lifts a doctor off their feet), wind a push [x, y, z], drag slows. follow as a zone's, or a doctor. secs 5, at most 30. Returns { set(spec), alive(), remove() }, or null while ${MAX_FIELDS_PER_SOURCE} of its fields are still at work.
+  w.tie(a, b, { length, spring, secs, color, width })   a rope between two of: a doctor (at their chest), a body, me (the hand that holds it, so it pulls the holder), or a point [x, y, z]. It never lets them get further apart than length (the distance now, by default); spring 0..1 makes it pull and push back toward its length, softly to stiffly. The heavier end moves less. Drawn sagging when slack, in color and width (color false: not drawn). secs 10, at most 30. Returns { length(), setLength(l), distance() (how far apart its ends are now), alive(), remove() }, or null when an end is gone or ${MAX_TIES_PER_SOURCE} of its ropes are still up.
   w.affect(doctor, { speed, jump, gravity, size, slip, reverse, hands, blind, tint, shake, glow, wear }, secs)   changes a doctor for up to 15 s: speed, jump, gravity and size multiply (1 is normal; speed 0 and jump 0 keep them where they stand), slip 0..1, reverse swaps their keys, hands false keeps them from using, picking up or throwing anything, blind 0..1 covers their own view in tint (a colour; dark unless given), 1 seeing nothing;
       and how they look meanwhile: shake 0..1 makes them tremble (1 convulses), glow lights them in a colour, wear is a model (made with w.model) drawn on them, built round a doctor standing with their feet at the origin and facing +z.
       A doctor held (speed under 0.25, hands false, blind 0.7 or more, pulled by a rope, in a field they cannot walk against, or lying knocked flat) for ${HOLD_MAX} s, less the time they were free between, shakes it off: their holds end, ropes and fields let go of them, and for ${HOLD_MAX} s no new hold takes and nothing knocks them flat.
@@ -96,7 +97,7 @@ w:
       Returns a body { id, age(), pos(), vel(), setVel(v), push(v), setPos(p), resize(k), pose(part, [rx, ry, rz]), stick(target), unstick(), alive(), remove() }: age is seconds since it was spawned; resize(k) makes it k times the size it was spawned at (not k times its present size), as drawn and as it collides; pose turns a named part of its model; stick fixes it to what it hit (the target hit gets, or a doctor or a body), going and turning with them and passing through what it touches meanwhile, or with nothing given, where it is; unstick lets it go again. At most 40 of a thing's bodies at once.
       A body, like me, w and every other handle they return (sights, zones, fields, ropes), is frozen: code keeps its own state in its own variables, never as new fields on a handle.
   w.zone({ at, radius or size [x, y, z], follow, secs }, { enter(doctor, dt), stay(doctor, dt), exit(doctor, dt) })   a space that notices doctors.
-      follow 'holder': at is then [right, up, ahead] from the holder's feet and turns with them (the holder is never inside it); follow a body: at is from the body. Returns { remove() }.
+      follow 'holder': at is then [right, up, ahead] from the holder's feet and turns with them (the holder is never inside it); follow a body: at is from the body. Returns { remove() }, or null while ${MAX_ZONES_PER_SOURCE} of its zones are still there.
   w.show(model, { at, rot, face, up, scale, grow, vel, spin, secs, fade, opacity, light, follow, tick(sight, dt) })   shows a model made with w.model for a while, only to be seen: it touches nothing and is not a body. At most ${MAX_SIGHTS_PER_SOURCE} of a thing's at once.
       scale its size at the start (a number, or [x, y, z] to stretch it), grow the size it swells or shrinks to by the end (fast at first, then slower), vel moves it and spin turns it (radians a second about its own axes), secs how long it is there (1, at most 30), fade the last part of that time over which it fades away (0..1, 0.3 unless given), opacity how solid it is (1), light a colour it lights what is near with, more the bigger it is. Its glowing shapes are drawn as light, adding to what is behind them.
       rot turns it (radians); or face [x, y, z] points its +z that way, with its +y toward up (so a model built along +z from 0 to 1 and scaled [1, 1, d] reaches d metres along face).
@@ -140,9 +141,13 @@ A player has asked for a thing in their own words, or pressed the button for one
 
 Where the words name something clearly, make that very thing, doing all a player would expect of it from films and games, every movement and effect of it shown as it happens, and moving as real things move, with weight, momentum and the world's pull. Where the words leave room, take the reading nobody expects. When the asker's words are under a curse, follow the curse's instruction on them before reading them.
 
+Nothing comes twice in a match. The things already had in this match, by anyone, come listed with the asker's words, and so do the words of things being made for others right now, which count as had. When their words ask for one of those, under whatever name, they do not get it again: make something else of their words, the reading nobody expects, and give as again the name of the one they asked for as it is listed, or the words of the one being made.
+
 What a thing causes matters most, more than its name or its look: what happens, physically, to the people and the world it reaches, with a character of its own that no other thing has. Make what it causes big and unmistakable, plain to everyone across the arena as it happens and to the one it happens to: build the sight of every effect yourself, out of your own models, as large and as alive as the thing deserves; and where it moves people or things, move them with the force the thing really has.
 
-Fairness, which the game also enforces: one hit takes at most ${HIT_CAP}; one attacker takes at most ${PER_SECOND_CAP} a second from another; the thing takes at most its budget from any one doctor in any ${BUDGET_WINDOW} s, ${BUDGETS[0]} for most things and ${BUDGETS[1]} for one that is hard to hit with or risky to use; no doctor is held still, blinded or kept from their hands for more than ${HOLD_MAX} s at a time. It never decides the round by itself and never reaches every other doctor at once. It can be used again and again, unless running out is part of what was asked for.
+Fairness, which the game also enforces: one hit takes at most ${HIT_CAP}; one attacker takes at most ${PER_SECOND_CAP} a second from another; the thing takes at most its budget from any one doctor in any ${BUDGET_WINDOW} s, ${BUDGETS[0]} for most things and ${BUDGETS[1]} for one that is hard to hit with or risky to use; no doctor is held still, blinded or kept from their hands for more than ${HOLD_MAX} s at a time. It never decides the round by itself and never reaches every other doctor at once.
+
+It runs out: give it as many uses as such a thing would really have, from ${USES[0]} to ${USES[1]}, enough for a fight but never for a whole round, and fewer the more it takes or the more doctors it reaches. A click or a shift-click that does something costs a use, and so does each further second it is held down doing something; a click that does nothing while it is still reloading costs none. With none left it leaves the hand, and what it set going plays out. Its holder sees the uses left.
 
 Whoever picks it up reads its name and one line telling how to use it (click, hold, shift-click), in plain words. They may hold another thing in their other hand and use the two together.
 
@@ -154,9 +159,11 @@ A thing held in the hand is built with the hand at the origin and its front (wha
 ${THING_DOC}`
 
 export interface ThingAnswer {
+  again: string
   name: string
   description: string
   budget: number
+  uses: number
   form: string
   look: string
   code: string
@@ -165,21 +172,31 @@ export interface ThingAnswer {
 export const THING_SCHEMA: Schema = {
   type: 'object',
   properties: {
+    again: str('When the words ask for a thing already had in this match (you made something else of them): its name as listed, or the words of the one being made for another. Otherwise empty.'),
     name: str('Its name, a few words.'),
     description: str('One line for the holder: what it is and how to use it.'),
     budget: { type: 'integer', enum: [...BUDGETS], description: `What it may take from one doctor in any ${BUDGET_WINDOW} s.` },
+    uses: { type: 'integer', minimum: USES[0], maximum: USES[1], description: 'How many uses it has before it is spent.' },
     form: FORM,
     look: str('Model code: the body of function (m), no header.'),
     code: str('Thing code: the body of function (me, w), no header, returning the handlers.'),
   },
-  required: ['name', 'description', 'budget', 'form', 'look', 'code'],
+  required: ['again', 'name', 'description', 'budget', 'uses', 'form', 'look', 'code'],
   additionalProperties: false,
 }
 
-export function thingMessage(req: { ask: string | null; by: string; curse: string | null; avoid: string[]; genie: boolean; aside: boolean; fix: { answer: ThingAnswer; problems: string[] } | null }): string {
+/**
+ * A thing's request as the designer reads it. avoid: every thing's name, for the random button;
+ * for typed words (nothing comes twice in a match), had: what has come this match, and making:
+ * the words of others' things being made now (listed with had, the designer let a crossbow being
+ * made pass: 2026-11-11).
+ */
+export function thingMessage(req: { ask: string | null; by: string; curse: string | null; avoid: string[]; had: string[]; making: string[]; genie: boolean; aside: boolean; fix: { answer: ThingAnswer; problems: string[] } | null }): string {
   const parts: string[] = []
   if (req.ask === null) parts.push(`${req.by} pressed the button: invent a thing nobody has had before, unlike every one of these: ${req.avoid.join('; ') || '(none yet)'}.`)
   else parts.push(`${req.by} asks for: ${JSON.stringify(req.ask)}`)
+  if (req.ask !== null && req.had.length) parts.push(`Had already in this match: ${req.had.join('; ')}.`)
+  if (req.ask !== null && req.making.length) parts.push(`Being made for others right now, which counts as had: ${req.making.map((w) => JSON.stringify(w)).join('; ')}.`)
   if (req.ask === null && req.aside) parts.push('This one takes no credibility from anyone by itself: what it does changes the fight some other way.')
   if (req.ask !== null && req.genie) parts.push('This time be a genie: twist their words, even clear ones, mischievously and as far as they will bend, while still giving them something that works.')
   if (req.curse) parts.push(`A curse lies on ${req.by}'s words, to be followed first: ${JSON.stringify(req.curse)}`)

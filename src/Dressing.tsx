@@ -459,6 +459,7 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
             <p>
               <kbd>E</kbd> opens it, and each mouse button works its own hand. An empty hand shoves, at most {FISTS_BUDGET} from each in {BUDGET_WINDOW} s.
             </p>
+            <p>Every thing has its own count of uses and is gone when they are spent. Nothing comes twice in a match: words asking for a thing had already become something else.</p>
             <p>Dismissed, you may review a player you watch (not a bot), once a round: it bends their next request. The last doctor standing wins the round.</p>
           </div>
 

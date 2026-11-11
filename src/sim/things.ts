@@ -5,7 +5,7 @@
  * empty and no design is ready in time).
  */
 
-import { BUDGETS, type Budget, type Vec3 } from '../protocol'
+import { BUDGETS, USES, type Budget, type Vec3 } from '../protocol'
 import { recipeOf, thingApi } from './api'
 import { buildArena } from './arena'
 import { LECTURE_HALL } from './hall'
@@ -18,6 +18,8 @@ export interface ThingDesign {
   /** One line the holder reads. */
   description: string
   budget: Budget
+  /** Uses a new one has, USES[0] to USES[1], as its designer gave it. */
+  uses: number
   /** Model code: the body of function (m). */
   look: string
   /** Thing code: the body of function (me, w), returning its handlers. */
@@ -35,10 +37,11 @@ export interface ThingDesign {
 /** Compiles a design. Throws a line naming what is wrong. */
 export function compileThing(d: ThingDesign): ThingKind {
   if (!BUDGETS.includes(d.budget)) throw new Error(`budget ${String(d.budget)} is not 10 or 20`)
+  if (!Number.isInteger(d.uses) || d.uses < USES[0] || d.uses > USES[1]) throw new Error(`uses ${String(d.uses)} is not a whole number from ${USES[0]} to ${USES[1]}`)
   const look = compile('look', d.look)
   const factory = compile('thing', d.code)
   const { recipe } = recipeOf(look)
-  return { id: d.id, name: d.name, description: d.description, budget: d.budget, recipe, factory, models: new Map() }
+  return { id: d.id, name: d.name, description: d.description, budget: d.budget, uses: d.uses, recipe, factory, models: new Map() }
 }
 
 /**
@@ -66,7 +69,8 @@ export function trialThing(kind: ThingKind): string[] {
     for (let i = 0; i < n; i++) sim.step()
   }
   a.input = { ...a.input, yaw: 0, pitch: 0 }
-  sim.newThing(kind, a, a.pos)
+  // The trial tries every use, whatever the thing's count: none is spent here.
+  sim.newThing(kind, a, a.pos).left = Infinity
   try {
     steps(5)
     press(a, 'use')
@@ -91,7 +95,7 @@ export function trialThing(kind: ThingKind): string[] {
   return sim.errors.map((e) => e.error)
 }
 
-const design = (id: string, name: string, description: string, budget: Budget, look: string, code: string): ThingDesign => ({ id, name, description, budget, look, code, ask: '', by: '', random: false, model: 'the game', ms: 0, made: '2026-11-09T00:00:00.000Z' })
+const design = (id: string, name: string, description: string, budget: Budget, uses: number, look: string, code: string): ThingDesign => ({ id, name, description, budget, uses, look, code, ask: '', by: '', random: false, model: 'the game', ms: 0, made: '2026-11-09T00:00:00.000Z' })
 
 /** The game's own things. */
 export const STARTERS: ThingDesign[] = [
@@ -100,6 +104,7 @@ export const STARTERS: ThingDesign[] = [
     'Red Pen of Peer Review',
     'Click to strike a line through someone.',
     10,
+    20,
     `m.cylinder(0.03, 0.03, 0.5, { at: [0, 0, 0.12], rot: [Math.PI / 2, 0, 0], color: '#c0202a' })
 m.cone(0.03, 0.08, { at: [0, 0, 0.41], rot: [Math.PI / 2, 0, 0], color: '#f4e9d0' })
 m.cylinder(0.035, 0.035, 0.1, { at: [0, 0, -0.14], rot: [Math.PI / 2, 0, 0], color: '#26252b' })`,
@@ -125,6 +130,7 @@ return {
     'Bound Thesis Launcher',
     'Lobs a full bound thesis. Heavy, slow and hard to aim; it really hurts.',
     20,
+    6,
     `m.box(0.16, 0.18, 0.7, { at: [0, 0, 0.15], color: '#5a4632' })
 m.cylinder(0.11, 0.11, 0.3, { at: [0, 0.02, 0.5], rot: [Math.PI / 2, 0, 0], color: '#b08a3c' })
 m.box(0.06, 0.2, 0.1, { at: [0, -0.15, -0.05], color: '#3a2a20' })`,
@@ -154,6 +160,7 @@ return {
     'sabbatical-scooter',
     'Sabbatical Scooter',
     'Stand on it and go fast. Its front bumper bites whoever it meets.',
+    10,
     10,
     `m.box(0.22, 0.06, 0.9, { at: [0, 0.12, 0], color: '#d8402c' })
 m.part('wheelFront', { at: [0, 0.08, 0.4] }, () => m.torus(0.07, 0.03, { rot: [0, Math.PI / 2, 0], color: '#26252b' }))
@@ -192,6 +199,7 @@ return {
     'Footnote Grenade',
     'Click to lob one; the next is ready 2 s later. Each goes off a moment after it lands, with a long footnote.',
     20,
+    6,
     `m.sphere(0.12, { color: '#3a3a3a' })
 m.cylinder(0.04, 0.04, 0.06, { at: [0, 0.13, 0], color: '#b08a3c' })
 m.torus(0.04, 0.01, { at: [0.05, 0.17, 0], color: '#c4c9d1' })`,

@@ -34,18 +34,18 @@ const MARKS = 3
 
 const short = (text: string, n: number) => (text.length > n ? `${text.slice(0, n - 1)}…` : text)
 
-/** A crate opened, as the feed tells it: who opened it (and whose it was), what was asked and what came (twisted by the genie, or from the archive in its place), and the review it was under. */
+/** A crate opened, as the feed tells it: who opened it (and whose it was), what was asked and what came (made as something else because it was had already this match, twisted by the genie, or from the archive in its place), and the review it was under. */
 function crateStory(e: Extract<GameEvent, { type: 'opened' }>, name: (id: string) => string): string {
   const who = e.by === e.owner ? name(e.by) : `${name(e.by)} took ${name(e.owner)}'s crate`
   const what = e.archive ? `${e.thing}, from the archive${e.ask === null ? '' : ` in place of “${e.ask}”`}` : e.ask === null ? `${e.thing}, something nobody has had` : `“${e.ask}” became ${e.thing}`
-  return [`${who}: ${what}.`, ...(e.genie ? ['The genie twisted it.'] : []), ...(e.curse ? [`Under review: “${short(e.curse, 60)}”`] : [])].join(' ')
+  return [`${who}: ${what}.`, ...(e.again ? [`${e.again} was had already this match.`] : []), ...(e.genie ? ['The genie twisted it.'] : []), ...(e.curse ? [`Under review: “${short(e.curse, 60)}”`] : [])].join(' ')
 }
 
-/** How a thing in hand came out of its crate: who asked for what, and whether the genie twisted it or the archive stood in. */
+/** How a thing in hand came out of its crate: who asked for what, and whether it was had already this match, the genie twisted it or the archive stood in. */
 function originLine(o: Origin, you: string | null, name: (id: string) => string): string {
   if (o.archive) return o.ask === null ? 'From the archive' : `From the archive, in place of “${o.ask}”`
   const who = o.by === you ? 'You' : name(o.by)
-  return o.ask === null ? `${who} asked for something nobody has had` : `${who} asked for “${o.ask}”${o.genie ? '; the genie twisted it' : ''}`
+  return o.ask === null ? `${who} asked for something nobody has had` : `${who} asked for “${o.ask}”${o.again ? `; ${o.again} was had already this match` : ''}${o.genie ? '; the genie twisted it' : ''}`
 }
 
 function Scene({ net, controls, worldRef, fps, marks }: { net: Net; controls: Controls; worldRef: React.MutableRefObject<World | null>; fps: React.RefObject<HTMLDivElement | null>; marks: React.RefObject<HTMLDivElement | null> }) {
@@ -289,6 +289,7 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
         }
       } else if (e.type === 'spent' && e.by === net.you) spent.current.set(e.thing, { victim: e.victim, until: now + e.back * 1000 })
       else if (e.type === 'notYet' && e.who === net.you) pageNote.current = { text: `Only ${name(e.owner)} may open it, for ${e.secs} s more.`, until: now + 2500 }
+      else if (e.type === 'usedUp' && e.who === net.you) pageNote.current = { text: `${e.thing} is used up. T asks for something new.`, until: now + 3000 }
     })
   }, [net])
 
@@ -410,7 +411,10 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
                   <div className="label">{h === 0 ? 'Left hand · left button' : 'Right hand · right button'}</div>
                   {held ? (
                     <>
-                      <div className="held-name">{held.name}</div>
+                      <div className="held-name">
+                        {held.name}
+                        <span className={held.left <= 2 ? 'held-left low' : 'held-left'}>{held.left === 1 ? '1 use left' : `${held.left} uses left`}</span>
+                      </div>
                       {held.origin && <div className="held-origin">{originLine(held.origin, net.you, name)}</div>}
                       <div className="held-desc">{asTwoHanded(held.description)}</div>
                       <div className="held-budget">
@@ -473,7 +477,7 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
         >
           <div className="page-body">
             <h2>{writing.kind === 'review' ? `Review ${name(writing.target)}'s next request` : 'What do you need?'}</h2>
-            <p className="lede">{writing.kind === 'review' ? 'One review a round. The designer follows it before reading their words.' : 'Anything at all. You stand still while you write, so be quick.'}</p>
+            <p className="lede">{writing.kind === 'review' ? 'One review a round. The designer follows it before reading their words.' : 'Anything at all, but nothing had already this match. You stand still while you write, so be quick.'}</p>
             <input
               ref={input}
               value={text}
@@ -577,6 +581,7 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
                   Each mouse button works its own hand; an empty one shoves, at most {FISTS_BUDGET} from each in {BUDGET_WINDOW} s.
                 </div>
                 <div className="hint">Everyone's first crate waits beside them as the round begins. A crate is its asker's alone for {CRATE_OWNER_ONLY} s once ready, then anyone's.</div>
+                <div className="hint">Every thing has its own count of uses, on its card, and is gone when they are spent. Nothing comes twice in a match: words asking for a thing had already become something else.</div>
                 <div className="hint">
                   Dismissed, you may review a player you watch (not a bot), once a round (<kbd>T</kbd>): it bends their next request.
                 </div>

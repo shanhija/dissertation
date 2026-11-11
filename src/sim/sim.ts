@@ -86,6 +86,13 @@ const THROW_SPEED = 16
 const THROWN_DAMAGE = 6
 /** A made thing's code that throws this many times stops: it fizzles. */
 const MAX_ERRORS = 6
+/**
+ * A spent thing (no uses left) is gone once what it set going (bodies, sights, zones, fields,
+ * ropes) has played out, but no sooner than SPENT_MIN seconds (its code may still be counting
+ * toward something) and no later than SPENT_MAX (what it sets going lasts at most 30 s).
+ */
+const SPENT_MIN = 3
+const SPENT_MAX = 30
 export const MAX_BODIES = 300
 export const MAX_BODIES_PER_SOURCE = 40
 export const MAX_ZONES_PER_SOURCE = 8
@@ -161,6 +168,8 @@ export interface ThingKind {
   name: string
   description: string
   budget: Budget
+  /** Uses a new one has (see USES). */
+  uses: number
   recipe: Recipe
   /** The made `function (me, w)`: returns the thing's handlers. */
   factory: unknown
@@ -314,6 +323,15 @@ export interface Thing {
   disguise: string | null
   /** How it came out of its crate (null: from none). */
   origin: Origin | null
+  /** Uses left (see USES); the trial's are endless. */
+  left: number
+  /**
+   * The press its holder is working through, from a press to letting go: whether it has cost its
+   * use yet, the seconds held since (toward the next use), and whether it did something in them.
+   */
+  press: { paid: boolean; held: number; busy: boolean } | null
+  /** Its last use spent: out of every hand, unseen, playing out what it set going; where it was, since when, and who used it last (for what it still does). */
+  spent: { at: Vec3; t: number; by: string | null } | null
 }
 
 export interface Body {
@@ -387,7 +405,7 @@ export interface Zone {
 }
 
 /** How a crate's thing came: designed from the asker's words (twisted by the genie or not, under a curse's words or none), or from the archive. */
-export type Made = { archive: false; genie: boolean; curse: string | null } | { archive: true }
+export type Made = { archive: false; genie: boolean; again: string | null; curse: string | null } | { archive: true }
 
 export interface Crate {
   id: string
@@ -498,6 +516,8 @@ export class Sim {
   /** Harm counts only while the round is on. */
   live = false
   private events: GameEvent[] = []
+  /** Counts everything made code does (events, and every call of its handles but their reads), to tell whether a use did anything. */
+  stirs = 0
   private seq = 0
   /** Made-code objects for the arena and things, built by api.ts. */
   apiFor: ((sim: Sim, thing: Thing) => { me: unknown; w: unknown }) | null = null
@@ -519,6 +539,7 @@ export class Sim {
   }
 
   emit(e: GameEvent): void {
+    this.stirs++
     if (e.type === 'burst' || e.type === 'puff' || e.type === 'beam' || e.type === 'text' || e.type === 'sound' || e.type === 'shake' || e.type === 'show' || e.type === 'impact') {
       if (this.shown >= MAX_SHOWN) return
       this.shown++
@@ -804,16 +825,16 @@ export class Sim {
         if (usePressed[h]) {
           if (held) {
             act('use')
-            this.callThing(held, 'use')
+            this.work(held, 'use', dt)
           } else this.shove(d, h)
         }
         // Using it may have dropped it or spent it.
         const still = this.inHand(d, h)
-        if (still && still === held && input.hands[h] && !usePressed[h]) this.callThing(still, 'hold', dt)
-        if (still && d.wasUsing[h] && !input.hands[h]) this.callThing(still, 'release')
-        if (still && otherPressed[h]) {
+        if (still && still === held && input.hands[h] && !usePressed[h]) this.work(still, 'hold', dt)
+        if (still && d.wasUsing[h] && !input.hands[h]) this.work(still, 'release', dt)
+        if (still && otherPressed[h] && this.inHand(d, h) === still) {
           act('alt')
-          this.callThing(still, 'alt')
+          this.work(still, 'alt', dt)
         }
         if (throwPressed[h] && this.inHand(d, h)) {
           act('throw')
@@ -824,7 +845,7 @@ export class Sim {
     } else
       for (const h of HANDS) {
         const held = this.inHand(d, h)
-        if (d.wasUsing[h] && held) this.callThing(held, 'release')
+        if (d.wasUsing[h] && held) this.work(held, 'release', dt)
       }
     d.wasUsing = [input.hands[0] && !busy, input.hands[1] && !busy]
 
@@ -1289,6 +1310,9 @@ export class Sim {
       hand: 0,
       disguise: null,
       origin: null,
+      left: kind.uses,
+      press: null,
+      spent: null,
     }
     this.things.set(t.id, t)
     const api = this.apiFor!(this, t)
@@ -1318,12 +1342,80 @@ export class Sim {
     if (!r.ok) this.thingError(t, `${name}: ${r.error}`)
   }
 
+  /**
+   * Its holder works a thing: a press, holding it down, letting go, or its other use. What does
+   * something costs uses: a press, with what follows until it is let go, one (paid when anything
+   * in it first does something, so a press that does nothing while the thing reloads costs none),
+   * and one more for each further second held in which holding it did something; the other use
+   * one. With none left it is spent.
+   */
+  private work(t: Thing, name: 'use' | 'hold' | 'release' | 'alt', dt: number): void {
+    const before = this.stirs
+    if (name === 'hold') this.callThing(t, 'hold', dt)
+    else this.callThing(t, name)
+    if (t.dead || t.spent) return
+    const did = this.stirs > before
+    let cost = 0
+    if (name === 'alt') cost = did ? 1 : 0
+    else {
+      // A hold with no press before it: the button was down as the thing came into the hand.
+      if (name === 'use' || !t.press) t.press = { paid: false, held: 0, busy: false }
+      const p = t.press
+      if (did && !p.paid) {
+        p.paid = true
+        cost = 1
+      } else if (name === 'hold' && p.paid) {
+        p.held += dt
+        p.busy ||= did
+        if (p.held >= 1) {
+          p.held -= 1
+          if (p.busy) cost = 1
+          p.busy = false
+        }
+      }
+      if (name === 'release') t.press = null
+    }
+    t.left -= cost
+    if (t.left <= 0) this.exhaust(t)
+  }
+
+  /**
+   * A thing's last use is spent (or its code spent it): it leaves the hand, or the floor, and is
+   * seen no more, while what it set going plays out; then it is gone (SPENT_MIN, SPENT_MAX).
+   */
+  exhaust(t: Thing): void {
+    if (t.dead || t.spent) return
+    const at = this.thingPos(t)
+    const d = t.holder ? this.doctors.get(t.holder) : undefined
+    if (d) this.letGo(d, t)
+    if (t.body) {
+      this.owners.delete(t.collider!.handle)
+      this.world.removeRigidBody(t.body)
+      t.body = null
+      t.collider = null
+    }
+    t.spent = { at, t: this.time, by: d?.id ?? t.thrownBy }
+    t.holder = null
+    t.press = null
+    this.emit({ type: 'burst', at, color: '#bbbbbb', size: 0.4, count: 8, glow: false })
+    this.emit({ type: 'sound', at, sound: 'click', pitch: 0.8 })
+    this.emit({ type: 'usedUp', who: d?.id ?? null, thing: t.kind.name })
+  }
+
+  /** Whether anything a thing set going is still about: its bodies, sights, zones, fields or ropes. */
+  private playing(t: Thing): boolean {
+    for (const b of this.bodies.values()) if (b.owner === t.id) return true
+    for (const x of this.sights.values()) if (x.owner === t.id) return true
+    return this.zones.some((z) => z.owner === t.id && !z.dead) || this.fields.some((f) => f.owner === t.id && !f.dead) || this.ties.some((x) => x.owner === t.id && !x.dead)
+  }
+
   thingPos(t: Thing): Vec3 {
     if (t.holder) {
       const d = this.doctors.get(t.holder)!
       return d.riding === t.id ? [...d.pos] : this.handOf(d, t.hand)
     }
     if (t.body) return v3(t.body.translation())
+    if (t.spent) return [...t.spent.at]
     return [0, 0, 0]
   }
 
@@ -1557,7 +1649,9 @@ export class Sim {
     this.emit({ type: 'sound', at: [...c.p], sound: 'crunch', pitch: 1 })
     const t = this.newThing(c.kind!, d, c.p)
     const made = c.made!
-    t.origin = { by: c.owner, ask: c.ask, genie: !made.archive && made.genie, archive: made.archive }
+    const genie = !made.archive && made.genie
+    const again = made.archive ? null : made.again
+    t.origin = { by: c.owner, ask: c.ask, genie, again, archive: made.archive }
     this.emit({
       type: 'opened',
       crate: c.id,
@@ -1565,7 +1659,8 @@ export class Sim {
       owner: c.owner,
       thing: t.kind.name,
       ask: c.ask,
-      genie: !made.archive && made.genie,
+      genie,
+      again,
       archive: made.archive,
       curse: made.archive ? null : made.curse,
     })
@@ -1831,6 +1926,7 @@ export class Sim {
       if (t.dead) continue
       this.callThing(t, 'tick', dt)
       if (t.body && t.body.translation().y < (arena?.floor ?? -30) - 20) this.removeThing(t)
+      else if (t.spent && this.time - t.spent.t > SPENT_MIN && (this.time - t.spent.t > SPENT_MAX || !this.playing(t))) this.removeThing(t)
     }
     for (const b of [...this.bodies.values()]) {
       if (this.time > b.until || b.rb.translation().y < (arena?.floor ?? -30) - 20) {
@@ -1963,7 +2059,7 @@ export class Sim {
       rag: d.rag ? d.rag.snap() : null,
       fx: this.fxSnap(d),
     }))
-    const things: ThingSnap[] = [...this.things.values()].map((t) => {
+    const things: ThingSnap[] = [...this.things.values()].filter((t) => !t.spent).map((t) => {
       let p: Vec3
       let q: Quat
       if (t.holder) {
@@ -2030,7 +2126,7 @@ export class Sim {
   me(id: string): Pick<Me, 'curse' | 'hands'> {
     const d = this.doctors.get(id)
     if (!d) return { curse: null, hands: [null, null] }
-    const info = (t: Thing | null): HeldInfo | null => (t ? { name: t.kind.name, description: t.kind.description, budget: t.kind.budget, origin: t.origin } : null)
+    const info = (t: Thing | null): HeldInfo | null => (t ? { name: t.kind.name, description: t.kind.description, budget: t.kind.budget, left: t.left, origin: t.origin } : null)
     return {
       curse: d.curse ? { text: d.curse.text, by: d.curse.by } : null,
       hands: [info(this.inHand(d, 0)), info(this.inHand(d, 1))],

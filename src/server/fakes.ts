@@ -65,7 +65,11 @@ export class FakeDesigners implements Designers {
     const s = STARTERS[0]!
     const broken = this.broken > 0
     if (broken) this.broken--
-    return this.wait({ name: `Made Thing ${++this.n}`, description: s.description, budget: 10, form: 'A plain test form.', look: s.look, code: broken ? 'return { use() { me.nothing.at.all() } }' : s.code })
+    // As the designer would: words asked for already this match, in the very same words, name what they asked for again.
+    const words = /asks for: (".*")/.exec(message)?.[1]
+    const had = /^Had already in this match: (.*)\.$/m.exec(message)?.[1] ?? ''
+    const again = words ? (had.split('; ').find((h) => h.endsWith(`(asked as ${words})`))?.replace(/ \(asked as .*\)$/, '') ?? '') : ''
+    return this.wait({ again, name: `Made Thing ${++this.n}`, description: s.description, budget: 10, uses: 10, form: 'A plain test form.', look: s.look, code: broken ? 'return { use() { me.nothing.at.all() } }' : s.code })
   }
   wear(message: string): Promise<Answered<WearAnswer>> {
     this.asked.push({ kind: 'wear', message, crateMs: null })

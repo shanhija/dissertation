@@ -45,6 +45,23 @@ import {
 } from './sim'
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+
+/**
+ * A handle for made code, frozen, with every call but its reads counted as the code doing
+ * something (`Sim.stirs`): a use that calls nothing but reads did nothing, and costs no use.
+ */
+function acting<T extends object>(sim: Sim, o: T, reads: readonly string[]): Readonly<T> {
+  const rec = o as Record<string, unknown>
+  for (const k of Object.keys(rec)) {
+    const f = Object.getOwnPropertyDescriptor(rec, k)!.value as unknown
+    if (typeof f !== 'function' || reads.includes(k)) continue
+    rec[k] = (...args: unknown[]) => {
+      sim.stirs++
+      return (f as (...a: unknown[]) => unknown)(...args)
+    }
+  }
+  return Object.freeze(o)
+}
 const numOr = (v: unknown, def: number) => (typeof v === 'number' && Number.isFinite(v) ? v : def)
 const r3 = (v: number) => Math.round(v * 1000) / 1000
 const rq = (q: { x: number; y: number; z: number; w: number }): Quat => [r3(q.x), r3(q.y), r3(q.z), r3(q.w)]
@@ -100,7 +117,7 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
   const handleOf = (b: Body): unknown => {
     const known = handles.get(b)
     if (known) return known
-    const h = Object.freeze({
+    const h = acting(sim, {
       id: b.id,
       age: () => r3(sim.time - b.born),
       pos: (): Vec3 => {
@@ -148,7 +165,7 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
       },
       unstick: () => unstick(b),
       remove: () => sim.removeBody(b),
-    })
+    }, ['age', 'pos', 'vel', 'alive'])
     handles.set(b, h)
     return h
   }
@@ -182,7 +199,7 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
     const known = sightHandles.get(s)
     if (known) return known
     const live = () => sim.sights.get(s.id) === s
-    const h = Object.freeze({
+    const h = acting(sim, {
       id: s.id,
       alive: live,
       age: () => r3(sim.time - s.born),
@@ -214,14 +231,14 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
         sim.reshow(s.id, { poses: { ...s.poses } })
       },
       remove: () => sim.removeSight(s),
-    })
+    }, ['alive', 'age', 'pos'])
     sightHandles.set(s, h)
     return h
   }
 
   const holderCollider = (): Collider | null => holder()?.collider ?? null
 
-  return Object.freeze({
+  return acting(sim, {
     get time() {
       return r3(sim.time)
     },
@@ -462,12 +479,12 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
         dead: false,
       }
       sim.zones.push(z)
-      return Object.freeze({
+      return acting(sim, {
         id: z.id,
         remove: () => {
           z.dead = true
         },
-      })
+      }, [])
     },
     burst: (at: unknown, opts: unknown) => {
       const p = finiteVec(at)
@@ -590,7 +607,7 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
       }
       set(spec as Record<string, unknown>)
       sim.fields.push(f)
-      return Object.freeze({
+      return acting(sim, {
         id: f.id,
         alive: () => !f.dead,
         set: (o: unknown) => {
@@ -599,7 +616,7 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
         remove: () => {
           f.dead = true
         },
-      })
+      }, ['alive'])
     },
     tie: (a: unknown, b: unknown, opts: unknown) => {
       const ra = tieRefOf(a)
@@ -623,7 +640,7 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
         dead: false,
       }
       sim.ties.push(tie)
-      return Object.freeze({
+      return acting(sim, {
         id: tie.id,
         alive: () => !tie.dead,
         length: () => r3(tie.length),
@@ -638,7 +655,7 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
         remove: () => {
           tie.dead = true
         },
-      })
+      }, ['alive', 'length', 'distance'])
     },
     topple: (target: unknown, v: unknown) => {
       const d = doctorOf(target)
@@ -661,7 +678,7 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
       const p = finiteVec(at)
       if (p && SOUNDS.includes(name as SoundName)) sim.emit({ type: 'sound', at: p, sound: name as SoundName, pitch: clamp(numOr(pitch, 1), 0.25, 4), volume: clamp(numOr(volume, 1), 0, 2) })
     },
-  })
+  }, ['random', 'doctors', 'others', 'doctor', 'ray', 'near', 'held', 'model'])
 }
 
 const xyz = (v: Vec3) => ({ x: v[0], y: v[1], z: v[2] })
@@ -674,7 +691,7 @@ function capSpeed(v: Vec3, max: number): Vec3 {
 /** A thing's `me` and `w`. */
 export function thingApi(sim: Sim, t: Thing): { me: unknown; w: unknown } {
   const holder = () => (t.holder ? (sim.doctors.get(t.holder) ?? null) : null)
-  const source = (): Source => ({ attacker: t.holder ?? t.thrownBy, thing: t, fists: null, what: t.kind.name })
+  const source = (): Source => ({ attacker: t.holder ?? t.thrownBy ?? t.spent?.by ?? null, thing: t, fists: null, what: t.kind.name })
   const modelFor = (name: string) => {
     const known = t.kind.models.get(name)
     if (!known) return null
@@ -690,7 +707,7 @@ export function thingApi(sim: Sim, t: Thing): { me: unknown; w: unknown } {
     return id
   }
   const w = worldApi(sim, t.id, source, holder, modelFor, defineModel)
-  const me = Object.freeze({
+  const me = acting(sim, {
     id: t.id,
     name: t.kind.name,
     budget: t.kind.budget,
@@ -730,11 +747,9 @@ export function thingApi(sim: Sim, t: Thing): { me: unknown; w: unknown } {
       const d = holder()
       if (d) sim.dropHeld(d, t.hand)
     },
-    spend: () => {
-      sim.emit({ type: 'burst', at: sim.thingPos(t), color: '#bbbbbb', size: 0.4, count: 8, glow: false })
-      sim.removeThing(t)
-    },
-  })
+    left: () => t.left,
+    spend: () => sim.exhaust(t),
+  }, ['holder', 'pos', 'aim', 'dealt', 'riding', 'left'])
   return { me, w }
 }
 

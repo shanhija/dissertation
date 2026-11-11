@@ -383,6 +383,75 @@ describe('asking', () => {
     expect(asked()).toMatchObject({ state: 'ready', archive: false })
     expect(notes(a).at(-1)).toMatch(/^Ready: Made Thing/)
   })
+
+  it('never gives a thing twice in a match: typed words go to the designer with what came and what is being made, words asking again come as something else and say so, and the next match starts afresh', async () => {
+    const designers = new FakeDesigners()
+    const { random, next } = rolls()
+    const { join, advance, game } = setup(designers, null, random)
+    await flush()
+    const a = join('Alice')
+    const b = join('Bob')
+    a.send({ type: 'settings', settings: { bots: 0, arena: 'academic', wins: 3 } })
+    a.send({ type: 'ready', ready: true })
+    b.send({ type: 'ready', ready: true })
+    await flush()
+    advance(COUNTDOWN + REQUEST_COOLDOWN + 0.5)
+    await designers.settled()
+    // What each brought (from the button) came this match.
+    expect(things(designers).slice(0, 2).every((m) => !m.includes('Had already'))).toBe(true)
+    designers.delay = 30
+    next.push(0.9, 0.9)
+    a.send({ type: 'request', text: 'a flamethrower' })
+    await flush()
+    b.send({ type: 'request', text: 'a flamethrower' })
+    await flush()
+    expect(things(designers).at(-2)).toMatch(/Had already in this match: Made Thing \d+; Made Thing \d+\.$/)
+    expect(things(designers).at(-2)).not.toContain('Being made')
+    // Bob asked while Alice's was being made: hers is listed as being made, and counts as had.
+    expect(things(designers).at(-1)).toContain('Being made for others right now, which counts as had: "a flamethrower".')
+    await wait(80)
+    const first = /^Ready: (Made Thing \d+)\.$/.exec(notes(a).at(-1)!)![1]!
+    // Opened (one crate in the air at a time), and asked for again.
+    advance(3.5)
+    beside(game, a, snapOf(a).snap.crates.find((x) => x.owner === idOf(a) && x.ask === 'a flamethrower')!.id)
+    advance(0.1)
+    pick(a, 1)
+    advance(REQUEST_COOLDOWN)
+    await designers.settled()
+    // Asked again once it came: the designer is shown it with its words, and makes something else.
+    next.push(0.9)
+    a.send({ type: 'request', text: 'a flamethrower' })
+    await wait(80)
+    expect(things(designers).at(-1)).toContain(`${first} (asked as "a flamethrower")`)
+    advance(0.1)
+    const [, made, again] = /^Ready: (Made Thing \d+)\. (.*) was had already this match\.$/.exec(notes(a).at(-1)!)!
+    expect(again).toBe(first)
+    advance(3.5)
+    const crate = snapOf(a).snap.crates.find((x) => x.owner === idOf(a) && x.ask === 'a flamethrower')!
+    beside(game, a, crate.id)
+    advance(0.1)
+    pick(a, 2)
+    advance(0.1)
+    expect(events(b, 'opened').at(-1)).toMatchObject({ by: idOf(a), ask: 'a flamethrower', thing: made, again: first })
+    expect(snapOf(a).me.hands.find((h) => h?.name === made)!.origin).toMatchObject({ again: first })
+    // The match ends; in the next, nothing has come yet.
+    game.players.get(idOf(a))!.wins = 2
+    dismiss(game, b, advance)
+    advance(5)
+    expect(game.phase).toBe('matchEnd')
+    advance(10)
+    expect(game.phase).toBe('dressing')
+    a.send({ type: 'ready', ready: true })
+    b.send({ type: 'ready', ready: true })
+    await flush()
+    advance(COUNTDOWN + REQUEST_COOLDOWN + 0.5)
+    await designers.settled()
+    next.push(0.9)
+    a.send({ type: 'request', text: 'a flamethrower' })
+    await flush()
+    expect(things(designers).at(-1)).not.toContain('(asked as "a flamethrower")')
+    expect(things(designers).at(-1)).not.toContain(first)
+  })
 })
 
 describe('the dismissed review those still in', () => {
@@ -431,8 +500,8 @@ describe('the dismissed review those still in', () => {
     advance(0.1)
     pick(alice, 1)
     advance(0.1)
-    expect(events(bob, 'opened').at(-1)).toMatchObject({ by: idOf(alice), owner: idOf(alice), ask: 'a sword', genie: false, archive: false, curse: 'Every noun in it becomes the word duck.' })
-    expect(snapOf(alice).me.hands[0]!.origin).toEqual({ by: idOf(alice), ask: 'a sword', genie: false, archive: false })
+    expect(events(bob, 'opened').at(-1)).toMatchObject({ by: idOf(alice), owner: idOf(alice), ask: 'a sword', genie: false, again: null, archive: false, curse: 'Every noun in it becomes the word duck.' })
+    expect(snapOf(alice).me.hands[0]!.origin).toEqual({ by: idOf(alice), ask: 'a sword', genie: false, again: null, archive: false })
   })
   it('is refused for a bot, which asks for nothing, and not written by a page without a name', () => {
     const { join, advance, game } = setup(null, null)

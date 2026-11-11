@@ -36,6 +36,13 @@ export const BUDGETS = [10, 20] as const
 /** Seconds over which a thing's budget counts; then it may take again (weapons felt like they had "1-2 charges"). */
 export const BUDGET_WINDOW = 20
 export type Budget = (typeof BUDGETS)[number]
+/**
+ * How many uses a thing has, as its designer gives it: a press that does something costs one, and
+ * so does each further second it is held doing something; with none left it leaves the hand
+ * (2026-11-11: "some reasonable limit? not a common one, but weapon specific. to enforce new
+ * weapons, and not a good weapon to always being used").
+ */
+export const USES = [3, 30] as const
 /** Bare hands are budgeted like a thing: a shove takes SHOVE_DAMAGE, at most this much from one player in any BUDGET_WINDOW seconds (the push is never budgeted). */
 export const FISTS_BUDGET: Budget = BUDGETS[0]
 /** What the 'spent' event calls a doctor's bare hands. */
@@ -369,9 +376,12 @@ export type GameEvent =
   | { type: 'notYet'; who: string; owner: string; secs: number }
   /**
    * A crate opened by `by`, asked for by `owner` in these words (null: the random button); its
-   * thing came twisted by the genie, or from the archive, or under a curse's words (null: none).
+   * thing came twisted by the genie, or as something else because the words asked for a thing had
+   * already this match (again: its name), or from the archive, or under a curse's words (null: none).
    */
-  | { type: 'opened'; crate: string; by: string; owner: string; thing: string; ask: string | null; genie: boolean; archive: boolean; curse: string | null }
+  | { type: 'opened'; crate: string; by: string; owner: string; thing: string; ask: string | null; genie: boolean; again: string | null; archive: boolean; curse: string | null }
+  /** A thing's last use is spent: it left its holder's hand (who: null, it was lying loose). */
+  | { type: 'usedUp'; who: string | null; thing: string }
   /** A doctor did something with a hand, for the drawing to show. */
   | { type: 'act'; who: string; act: 'use' | 'alt' | 'throw' | 'shove' | 'pick'; hand: Hand }
   | { type: 'fizzle'; thing: string; holder: string | null }
@@ -411,11 +421,16 @@ export interface Snap {
   events: GameEvent[]
 }
 
-/** How a thing came out of its crate: asked for by a player in these words (null: something nobody has had), twisted by the genie, or from the archive in their place. */
+/**
+ * How a thing came out of its crate: asked for by a player in these words (null: something nobody
+ * has had), twisted by the genie, made as something else because the words asked for a thing had
+ * already this match (again: its name), or from the archive in their place.
+ */
 export interface Origin {
   by: string
   ask: string | null
   genie: boolean
+  again: string | null
   archive: boolean
 }
 
@@ -423,6 +438,8 @@ export interface HeldInfo {
   name: string
   description: string
   budget: Budget
+  /** Its uses left (see USES). */
+  left: number
   /** Null for a thing that came from no crate. */
   origin: Origin | null
 }

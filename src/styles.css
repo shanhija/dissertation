@@ -1240,6 +1240,18 @@ kbd {
   color: var(--gilt);
 }
 
+/* Its uses left, beside its name; red near the end. */
+.held-left {
+  margin-left: 10px;
+  font: 600 15px var(--body);
+  color: var(--text-lt-2);
+  white-space: nowrap;
+}
+
+.held-left.low {
+  color: var(--red-lt);
+}
+
 .held-desc {
   margin: 4px 0 8px;
   font-size: 17px;
