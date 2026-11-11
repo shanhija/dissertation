@@ -22,6 +22,7 @@ import {
 } from 'three'
 
 import type { Follow, GameEvent, Recipe, TieEnd, TieSnap, Vec3 } from '../protocol'
+import { LIGHT_ORDER } from './effects'
 import { GLOW, ModelInstance, solidMaterial } from './models'
 import { lighting } from '../lighting'
 import { PAINT_MODEL, paint } from './paint'
@@ -37,6 +38,19 @@ const q = new Quaternion()
 const e = new Euler()
 const wp = new Vector3()
 const wq = new Quaternion()
+
+/** A sight's model with materials of its own to fade (a copy keeps nothing of how it was painted, so it is painted again), its light drawn over smoke. */
+function fadingModel(recipe: Recipe): { inst: ModelInstance; solid: MeshStandardMaterial; glow: MeshBasicMaterial } {
+  const solid = paint(solidMaterial().clone(), PAINT_MODEL)
+  solid.transparent = true
+  const glow = (GLOW as MeshBasicMaterial).clone()
+  glow.transparent = true
+  glow.blending = AdditiveBlending
+  glow.depthWrite = false
+  const inst = new ModelInstance(recipe, solid, glow)
+  for (const m of inst.meshes) if (m.material === glow) m.renderOrder = LIGHT_ORDER
+  return { inst, solid, glow }
+}
 
 interface Live {
   ev: ShowEvent
@@ -77,14 +91,7 @@ export class Sights {
 
   show(ev: ShowEvent, recipe: Recipe, now: number): void {
     this.drop(ev.id)
-    // A copy of the models' painted material, to fade on its own (a copy keeps nothing of how it was painted).
-    const solid = paint(solidMaterial().clone(), PAINT_MODEL)
-    solid.transparent = true
-    const glow = (GLOW as MeshBasicMaterial).clone()
-    glow.transparent = true
-    glow.blending = AdditiveBlending
-    glow.depthWrite = false
-    const inst = new ModelInstance(recipe, solid, glow)
+    const { inst, solid, glow } = fadingModel(recipe)
     this.layer.add(inst.root)
     const b = recipe.bounds
     const radius = Math.max(0.05, Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2)
@@ -198,8 +205,27 @@ export class Sights {
     })
   }
 
+  /** A sight's drawing, kept while these sights last: see Effects.warm. */
+  private kept: ReturnType<typeof fadingModel> | null = null
+
+  /** A sight of a model, kept so its shaders (a fading copy of the models' paint) are made once, before the round, and stay made. */
+  warm(recipe: Recipe): Object3D {
+    this.dropKept()
+    this.kept = fadingModel(recipe)
+    return this.kept.inst.root
+  }
+
+  private dropKept(): void {
+    if (!this.kept) return
+    this.kept.inst.dispose()
+    this.kept.solid.dispose()
+    this.kept.glow.dispose()
+    this.kept = null
+  }
+
   dispose(): void {
     for (const id of [...this.live.keys()]) this.drop(id)
+    this.dropKept()
     this.layer.removeFromParent()
   }
 }

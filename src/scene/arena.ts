@@ -36,7 +36,9 @@ import { partTransform } from '../model/kit'
 import type { ArenaSolid, ArenaView, MaterialName, Recipe, Vec3 } from '../protocol'
 import { flowSurfaces, prepared, surface } from './materials'
 import { GLOW, modelOf } from './models'
+import { openSky } from './place'
 import { framed } from './portrait'
+import { Sightlines } from './sightlines'
 
 /** What a portrait shows: the doctor at a rank (0 leads the match), painted, and their name; null when nobody is there to paint. */
 export type PortraitOf = (rank: number) => { picture: Texture; name: string } | null
@@ -140,6 +142,10 @@ export class ArenaScene {
   private readonly disposers: (() => void)[] = []
   /** The arena's lamps as made, for the lighting tab to scale. */
   readonly lamps: { light: PointLight; power: number; range: number }[] = []
+  /** How much of it is open to the sky, 0 roofed over to 1 (place.ts): what light from all round it gets. */
+  readonly skyOpen: number
+  /** What hides one doctor from another (sightlines.ts). */
+  readonly sightlines: Sightlines
 
   constructor(view: ArenaView, models: ReadonlyMap<string, Recipe>, dust: boolean, portraitOf: PortraitOf = () => null) {
     for (const id of view.movers) {
@@ -219,11 +225,14 @@ export class ArenaScene {
         if (geo.glow) listFor(d.mover).glow.push({ g: prepared(geo.glow, full, 'plain', null), piece: d.piece })
       }
     }
+    // What stays, but glass: its roofs, and what stands between one doctor and another.
+    const roofs: BufferGeometry[] = []
     for (const [mover, l] of lists) {
       const parent = mover ? this.movers.get(mover)! : this.root
       for (const [name, arr] of l.surfaces) {
         const merged = merge(arr)
         if (!merged) continue
+        if (!mover && name !== 'glass') roofs.push(merged)
         const mesh = new Mesh(merged, surface(name))
         mesh.castShadow = name !== 'glass' && name !== 'water'
         mesh.receiveShadow = true
@@ -235,6 +244,8 @@ export class ArenaScene {
       }
     }
     if (this.bounds.isEmpty()) this.bounds.set(new Vector3(-30, -1, -30), new Vector3(30, 10, 30))
+    this.skyOpen = openSky(roofs, this.bounds)
+    this.sightlines = new Sightlines(roofs)
 
     // The doctors' portraits.
     for (const p of view.portraits ?? []) {

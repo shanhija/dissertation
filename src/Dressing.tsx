@@ -6,9 +6,9 @@
  * to turn it), over a brass plaque with their name. The left page is the committee (who is here
  * and ready, the next arena, what was said, the chair's settings, where friends join); the right
  * page the dossier (the name, needed; the thesis, which the committee writes when it is left
- * empty; a line to say how the doctor looks, which Opus makes; height, build, walk and colours;
- * the wardrobe of every part anyone has had made). Along the foot: when the round starts, Taunt
- * and Ready.
+ * empty; what they bring to their defence, made once they are Ready; a line to say how the doctor
+ * looks, which Opus makes; height, build, walk and colours; the wardrobe of every part anyone has
+ * had made). Along the foot: when the round starts, the wins the match needs, Taunt and Ready.
  */
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
@@ -17,9 +17,11 @@ import { BoxGeometry, Color, CylinderGeometry, Euler, Matrix4, Mesh, PMREMGenera
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 
 import type { Net } from './net'
-import { GAITS, SLOTS, type Gait, type Lobby, type Look, type Profile, type Slot } from './protocol'
+import { BUDGET_WINDOW, CRATE_OWNER_ONLY, FISTS_BUDGET, GAITS, MATCH_WINS, SLOTS, type Gait, type Lobby, type Look, type PlayerInfo, type Profile, type Slot } from './protocol'
 import { DoctorMesh } from './scene/doctor'
 import { prepared, surface, warmSurfaces } from './scene/materials'
+import { setEngraving } from './scene/paint'
+import { lighting } from './lighting'
 import { openOptions } from './options'
 import { play, speak, wakeAudio } from './sounds'
 
@@ -43,6 +45,15 @@ const SLOT_NAMES: Record<Slot, string> = {
   back: 'On the back',
   feet: 'On the feet',
 }
+/** What becomes of what one brings to one's defence, as the dossier says it. */
+const BRINGING: Record<PlayerInfo['bringing'], string> = {
+  none: 'Made once you are Ready, it waits in a crate beside you as the round begins.',
+  queued: 'Waiting its turn to be made. You may still change the words.',
+  making: 'Being made.',
+  ready: 'Made. It waits in a crate beside you as the round begins.',
+  failed: 'Its design failed: a thing from the archive waits in a crate beside you instead.',
+}
+
 /** Seconds as minutes and seconds, 1:05. */
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 
@@ -112,9 +123,11 @@ const FRAMED = 2.3
 
 function Stand({ net, turn, framing }: { net: Net; turn: React.MutableRefObject<number>; framing: Framing }) {
   const doctor = useMemo(() => new DoctorMesh(), [])
-  const { camera, size } = useThree()
+  const { camera, size, gl } = useThree()
   useEffect(() => () => doctor.dispose(), [doctor])
   useFrame((_, dt) => {
+    // The engraving as the lighting tab has it, judged as under an open sky (not by the last arena's roof).
+    setEngraving(1, lighting().hatchSpacing * gl.getPixelRatio())
     // The doctor as large as the gap between the pages allows, and in its middle: the camera
     // stands back until FRAMED metres fill the gap's height, and the picture is shifted so the
     // middle of the view falls on the middle of the gap.
@@ -171,6 +184,8 @@ function Stand({ net, turn, framing }: { net: Net; turn: React.MutableRefObject<
 export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
   const [profile, setProfileState] = useState<Profile>(net.profile)
   const [ask, setAsk] = useState('')
+  const [bring, setBring] = useState('')
+  const bringTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [slot, setSlot] = useState<Slot>('hair')
   const [taunts, setTaunts] = useState<{ id: number; who: string; text: string }[]>([])
   const turn = useRef(0)
@@ -225,6 +240,20 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
     setLook({ worn })
     play('ui', 1.1)
   }
+  // What they bring, as the field shows it, whenever the page (re)connects: a reloaded page's empty
+  // field is what the server keeps, not the words typed before; a page back from a network blink
+  // keeps its words on both sides.
+  useEffect(() => {
+    if (net.connected) net.send({ type: 'bring', text: bring })
+    // Only on (re)connecting: the words as they are typed go through writeBring.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [net.connected])
+  /** What they bring goes to the server as it is written, a moment after the last key (the last words win). */
+  const writeBring = (t: string) => {
+    setBring(t)
+    if (bringTimer.current) clearTimeout(bringTimer.current)
+    bringTimer.current = setTimeout(() => net.send({ type: 'bring', text: t }), 400)
+  }
   const sendAsk = () => {
     const t = ask.trim()
     if (!t) return
@@ -237,6 +266,7 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
   const humans = lobby.players.filter((p) => !p.bot)
   const note = net.note && net.note.until > performance.now() ? net.note.text : null
   const arena = lobby.arena
+  const bringing = me?.bringing ?? 'none'
 
   const ornament = (
     <div className="ornament">
@@ -390,8 +420,42 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
                   <option value="anything">Anything at all</option>
                 </select>
               </div>
+              <div className="chair-row">
+                <span>Rounds to win</span>
+                <select
+                  value={lobby.settings.wins ?? 'room'}
+                  onChange={(e) =>
+                    net.send({
+                      type: 'settings',
+                      settings: {
+                        ...lobby.settings,
+                        wins: MATCH_WINS.find((w) => String(w) === e.target.value) ?? null,
+                      },
+                    })
+                  }
+                >
+                  <option value="room">{lobby.settings.wins === null ? `By the room: ${lobby.wins}` : 'By the room'}</option>
+                  {MATCH_WINS.map((w) => (
+                    <option key={w} value={w}>
+                      {w}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </>
           )}
+
+          <h3>How a defence goes</h3>
+          <div className="rules">
+            <p>What you bring waits in a crate beside you as the round begins.</p>
+            <p>
+              <kbd>T</kbd> asks for anything, <kbd>R</kbd> for something nobody has had: a crate comes with your name on it, yours alone for {CRATE_OWNER_ONLY} s once ready, then anyone's.
+            </p>
+            <p>
+              <kbd>E</kbd> opens it, and each mouse button works its own hand. An empty hand shoves, at most {FISTS_BUDGET} from each in {BUDGET_WINDOW} s.
+            </p>
+            <p>Dismissed, you may review a player you watch (not a bot), once a round: it bends their next request. The last doctor standing wins the round.</p>
+          </div>
 
           {lobby.join.length > 0 && humans.length < 8 && (
             <>
@@ -429,6 +493,11 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
             <span className="label">Thesis</span>
             <input value={profile.title} maxLength={160} placeholder="Leave it empty and the committee writes one" onChange={(e) => update({ ...profile, title: e.target.value })} onBlur={() => net.setProfile(profile)} />
           </label>
+          <label className="field">
+            <span className="label">What will you bring to your defence?</span>
+            <input value={bring} maxLength={400} disabled={bringing !== 'none' && bringing !== 'queued'} placeholder="A thing, in your own words; leave it empty for a surprise" onChange={(e) => writeBring(e.target.value)} />
+          </label>
+          <div className="note-inline bring-state">{BRINGING[bringing]}</div>
 
           <h3>Appearance</h3>
           <label className="field">
@@ -514,7 +583,7 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
       <footer className="dress-bar">
         <div className="next">
           {lobby.timer !== null && <span className="timer">The round starts in {lobby.timer} s, ready or not</span>}
-          {lobby.round > 0 ? `Round ${lobby.round} played · the first to win 5 takes the doctorate` : 'The first to win 5 rounds takes the doctorate'}
+          {lobby.round > 0 ? `Round ${lobby.round} played · the first to win ${lobby.wins} takes the doctorate` : `The first to win ${lobby.wins} rounds takes the doctorate`}
         </div>
         {!profile.name.trim() && <span className="ready-hint">Write your name to be ready</span>}
         <button className="small" onClick={() => net.send({ type: 'taunt' })}>
@@ -525,6 +594,9 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
           disabled={!profile.name.trim()}
           onClick={() => {
             net.setProfile(profile)
+            // The words as they are now go first: Ready starts what they bring being made.
+            if (bringTimer.current) clearTimeout(bringTimer.current)
+            net.send({ type: 'bring', text: bring })
             net.send({ type: 'ready', ready: !me?.ready })
             play('start', 1)
           }}

@@ -7,7 +7,7 @@
  * doctor in a voice of their own, placed where the doctor is and only heard within HEARING metres.
  */
 
-import { audio, earAt, playRecorded, recorded, route, type Placed } from './audio'
+import { audio, ducker, earAt, playRecorded, recorded, route, type Placed } from './audio'
 import { options } from './options'
 import { HEARING, type MaterialName, type SoundName, type Vec3 } from './protocol'
 
@@ -139,7 +139,7 @@ export function play(cue: Cue, pitch = 1, at: Vec3 | null = null, volume = 1): v
 function drawn(cue: string, p: Placed): void {
   const recipe = RECIPES[cue]
   if (!recipe) return
-  const r = route(p)
+  const r = route(p, 'sound')
   if (r) recipe(r.into, p.pitch)
 }
 
@@ -214,27 +214,38 @@ const VOICE = 1.2
 
 /**
  * Plays a taunt as the server said it (MP3, base64) from where the doctor is, following them as
- * they go (`where`: their head now, or null once they are gone), louder nearer; nothing beyond
- * HEARING metres. Returns whether it is heard: with spoken taunts off in the options, or no voice
- * from the server, it is heard as a subtitle only.
+ * they go (`where`: their head now, or null once they are gone), louder nearer, carried as a voice
+ * (audio.ts) and the other sounds dipping while it is near; nothing beyond HEARING metres.
+ * Returns whether it is heard: with spoken taunts off in the options, or no voice from the server,
+ * it is heard as a subtitle only.
  */
 export function speak(voice: string | null, at: Vec3 | null, ear: Vec3 | null, where: () => Vec3 | null): boolean {
-  if (at && ear && Math.hypot(at[0] - ear[0], at[1] - ear[1], at[2] - ear[2]) > HEARING) return false
+  const d = at && ear ? Math.hypot(at[0] - ear[0], at[1] - ear[1], at[2] - ear[2]) : 0
+  if (d > HEARING) return false
   const c = audio()
   if (!voice || !c || !options().voices) return true
   void c.decodeAudioData(Uint8Array.from(atob(voice), (ch) => ch.charCodeAt(0)).buffer).then((buf) => {
-    const r = route({ at, pitch: 1, volume: VOICE })
+    const r = route({ at, pitch: 1, volume: VOICE }, 'voice')
     if (!r) return
     const s = c.createBufferSource()
     s.buffer = buf
     s.connect(r.into)
     s.start()
+    const duck = ducker()
+    duck(d)
     let on = true
-    s.onended = () => (on = false)
+    s.onended = () => {
+      on = false
+      duck(Infinity)
+    }
     const follow = () => {
       if (!on) return
       const w = where()
-      if (w) r.moveTo(w)
+      if (w) {
+        r.moveTo(w)
+        const e = earAt()
+        duck(Math.hypot(w[0] - e[0], w[1] - e[1], w[2] - e[2]))
+      }
       requestAnimationFrame(follow)
     }
     if (at) requestAnimationFrame(follow)

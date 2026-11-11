@@ -298,7 +298,10 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
       const f = finiteVec(v)
       if (!f) return
       const d = doctorOf(target)
-      if (d) return sim.knock(d, f)
+      if (d) {
+        sim.blame(d, source())
+        return sim.knock(d, f)
+      }
       const b = bodyOf(target)
       if (b) {
         const cur = b.rb.linvel()
@@ -324,11 +327,13 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
     teleport: (target: unknown, at: unknown) => {
       const d = doctorOf(target)
       const p = finiteVec(at)
-      if (d && p) sim.teleport(d, p)
+      if (!d || !p) return
+      sim.blame(d, source())
+      sim.teleport(d, p)
     },
     curse: (target: unknown, text: unknown, uses: unknown) => {
       const d = doctorOf(target)
-      if (d && typeof text === 'string') sim.curse(d, text, numOr(uses, 1))
+      if (d && typeof text === 'string') sim.curse(d, text, numOr(uses, 1), source().attacker)
     },
     model: (name: unknown, build: unknown): string | null => {
       if (typeof name !== 'string') return null
@@ -545,7 +550,10 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
     blast: (at: unknown, radius: unknown, speed: unknown) => {
       const p = finiteVec(at)
       if (!p) return []
-      return blast(sim, p, clamp(numOr(radius, 3), 0.1, 25), clamp(numOr(speed, 10), -40, 40), holder()).map((r) => ({ doctor: sim.view(r.doctor), strength: r3(r.strength) }))
+      const reached = blast(sim, p, clamp(numOr(radius, 3), 0.1, 25), clamp(numOr(speed, 10), -40, 40), holder())
+      const src = source()
+      for (const r of reached) sim.blame(r.doctor, src)
+      return reached.map((r) => ({ doctor: sim.view(r.doctor), strength: r3(r.strength) }))
     },
     field: (spec: unknown) => {
       if (spec === null || typeof spec !== 'object') return null
@@ -604,6 +612,7 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
       const tie: Tie = {
         id: sim.nextId('r'),
         owner,
+        source: source(),
         a: ra,
         b: rb,
         length: clamp(numOr(o.length, len(sub(pb, pa))), 0, 60),
@@ -633,7 +642,9 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
     },
     topple: (target: unknown, v: unknown) => {
       const d = doctorOf(target)
-      if (d) sim.topple(d, finiteVec(v) ?? [0, 4, 0])
+      if (!d) return
+      sim.blame(d, source())
+      sim.topple(d, finiteVec(v) ?? [0, 4, 0])
     },
     beam: (from: unknown, to: unknown, opts: unknown) => {
       const a = finiteVec(from)
@@ -663,7 +674,7 @@ function capSpeed(v: Vec3, max: number): Vec3 {
 /** A thing's `me` and `w`. */
 export function thingApi(sim: Sim, t: Thing): { me: unknown; w: unknown } {
   const holder = () => (t.holder ? (sim.doctors.get(t.holder) ?? null) : null)
-  const source = (): Source => ({ attacker: t.holder ?? t.thrownBy, thing: t, what: t.kind.name })
+  const source = (): Source => ({ attacker: t.holder ?? t.thrownBy, thing: t, fists: null, what: t.kind.name })
   const modelFor = (name: string) => {
     const known = t.kind.models.get(name)
     if (!known) return null
@@ -733,7 +744,7 @@ export function arenaWorld(sim: Sim, arenaId: string): unknown {
   return worldApi(
     sim,
     'arena',
-    () => ({ attacker: null, thing: null, what: 'the arena' }),
+    () => ({ attacker: null, thing: null, fists: null, what: 'the arena' }),
     () => null,
     (name) => models.get(name) ?? null,
     (name, build) => {

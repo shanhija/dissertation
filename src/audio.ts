@@ -9,6 +9,9 @@
  * - Every sound also goes into the room: an echo made for each arena from its size, what its
  *   surfaces are made of and how much of it is open to the sky (a stone hall rings, a library is
  *   dead, a ship's deck is open air).
+ * - Voices carry as voices do: further, clearer through a wall and with less echo than other
+ *   sounds, and the other sounds dip a little while a voice near the ear is heard (2026-11-11), so
+ *   a taunt's words come through the fight.
  * - The sounds themselves are recordings (CC0, from OpenGameArt, built into sounds/ by
  *   `npm install`; scripts/sounds/README.md says which), several of each, picked at random and at a slightly different pitch every time
  *   so no two are the same. sounds/library.json lists them; they load in the background after
@@ -23,6 +26,8 @@ let master: GainNode | null = null
 /** The room's echo: what is sent here comes back through the room. */
 let wet: GainNode | null = null
 let convolver: ConvolverNode | null = null
+/** Every sound but the voices, and its share of the echo: the way the voices duck them. */
+let others: { dry: GainNode; wet: GainNode } | null = null
 
 export function audio(): AudioContext | null {
   return ctx && ctx.state === 'running' ? ctx : null
@@ -40,6 +45,9 @@ export function wakeAudio(): void {
     wet = ctx.createGain()
     wet.gain.value = ROOM.wet
     wet.connect(convolver).connect(master)
+    others = { dry: ctx.createGain(), wet: ctx.createGain() }
+    others.dry.connect(master)
+    others.wet.connect(wet)
     void loadLibrary()
   }
 }
@@ -230,48 +238,116 @@ export interface Route {
   moveTo(at: Vec3): void
 }
 
+/** What a sound is, for how it carries to the ear. */
+export type Kind = 'sound' | 'voice'
+
+interface Carry {
+  /** Metres within which it is as loud as made, and how fast it falls away beyond (the browser's inverse distance model). */
+  refDistance: number
+  rolloff: number
+  /** The most of it that goes into the room's echo, however far it is. */
+  echoMax: number
+  /** Behind a wall: what the air leaves of its highs cut to 6%, but never below this (Hz), and its loudness times `wallGain`. */
+  wallLowpass: number
+  wallGain: number
+}
+
+/**
+ * How each kind carries (to tune by ear). Through the sounds' curve, a taunt was 17 dB down at
+ * 10 m and 20 at 15 m, mostly echo (the echo does not fall with distance), and a wall muffled it
+ * to about 1 kHz: friends 15 m away read the subtitle and heard a murmur. A voice's own curve is
+ * about 9 dB down at 15 m, at most 0.35 of it echoes, and a wall leaves it 2.5 kHz and 0.7 of its
+ * loudness.
+ */
+const CARRY: Record<Kind, Carry> = {
+  sound: { refDistance: 1.6, rolloff: 1.1, echoMax: 0.9, wallLowpass: 0, wallGain: 0.55 },
+  voice: { refDistance: 4, rolloff: 0.7, echoMax: 0.35, wallLowpass: 2500, wallGain: 0.7 },
+}
+
+/** Seconds between looks for a wall between a moving sound and the ear, and how long a change takes. */
+const WALL_CHECK = 0.25
+const WALL_RAMP = 0.15
+
+/** While a voice within `within` metres is heard, every other sound dips `db`, down over `attack` seconds and back over `release` after it. */
+const DUCK = { within: 12, db: -4, attack: 0.08, release: 0.4 }
+/** Voices near the ear now: the other sounds are down while there is any. */
+let ducking = 0
+
+/**
+ * A voice's dip of the other sounds: tell what it returns how far the voice is from the ear as it
+ * goes (the other sounds are down while it is within DUCK.within), and Infinity when it ends.
+ */
+export function ducker(): (distance: number) => void {
+  let near = false
+  return (distance) => {
+    const c = ctx
+    if (!c || !others || (distance <= DUCK.within) === near) return
+    near = !near
+    if (near ? ducking++ > 0 : --ducking > 0) return
+    for (const g of [others.dry.gain, others.wet.gain]) {
+      g.cancelScheduledValues(c.currentTime)
+      g.setTargetAtTime(near ? 10 ** (DUCK.db / 20) : 1, c.currentTime, (near ? DUCK.attack : DUCK.release) / 3)
+    }
+  }
+}
+
 /**
  * The way a sound goes from where it is to the ear: its loudness, the air's and any wall's
- * dulling, its place in 3D, and a share of it into the room. Null when it is too far to hear.
- * Moved, it keeps the wall it started behind.
+ * dulling, its place in 3D, and a share of it into the room, as its kind carries. Null when it is
+ * too far to hear. Moved, it looks for a wall in the way again every WALL_CHECK seconds.
  */
-export function route(p: Placed): Route | null {
+export function route(p: Placed, kind: Kind): Route | null {
   const c = audio()
   const out = mainOut()
-  if (!c || !out || !wet) return null
+  if (!c || !out || !wet || !others) return null
+  const carry = CARRY[kind]
+  const [dry, echo] = kind === 'voice' ? [out, wet] : [others.dry, others.wet]
   const gain = c.createGain()
   gain.gain.value = p.volume
   if (!p.at) {
-    gain.connect(out)
+    gain.connect(dry)
     const send = c.createGain()
     send.gain.value = 0.25
-    gain.connect(send).connect(wet)
+    gain.connect(send).connect(echo)
     return { into: gain, moveTo: () => {} }
   }
   const d = Math.hypot(p.at[0] - ear.at[0], p.at[1] - ear.at[1], p.at[2] - ear.at[2])
   if (d > 110) return null
-  const wall = d > 1.5 && occluded(p.at, ear.at)
+  const walled = (at: Vec3, d: number) => d > 1.5 && occluded(at, ear.at)
+  let wall = walled(p.at, d)
   const air = c.createBiquadFilter()
   air.type = 'lowpass'
   air.Q.value = 0.5
-  if (wall) gain.gain.value *= 0.55
-  const pan = new PannerNode(c, { panningModel: 'HRTF', distanceModel: 'inverse', refDistance: 1.6, maxDistance: 110, rolloffFactor: 1.1, positionX: p.at[0], positionY: p.at[1], positionZ: p.at[2] })
-  gain.connect(air).connect(pan).connect(out)
+  const through = c.createGain()
+  through.gain.value = wall ? carry.wallGain : 1
+  const pan = new PannerNode(c, { panningModel: 'HRTF', distanceModel: 'inverse', refDistance: carry.refDistance, maxDistance: 110, rolloffFactor: carry.rolloff, positionX: p.at[0], positionY: p.at[1], positionZ: p.at[2] })
+  gain.connect(through).connect(air).connect(pan).connect(dry)
   // Farther off, more of what is heard is the room's echo.
   const send = c.createGain()
-  air.connect(send).connect(wet)
-  const far = (d: number) => ({ air: Math.min(20000, 22000 / (1 + d / 28)) * (wall ? 0.06 : 1), echo: 0.2 + Math.min(0.7, d / 40) })
+  air.connect(send).connect(echo)
+  const far = (d: number) => {
+    const open = Math.min(20000, 22000 / (1 + d / 28))
+    return { air: wall ? Math.max(carry.wallLowpass, open * 0.06) : open, echo: Math.min(carry.echoMax, 0.2 + Math.min(0.7, d / 40)) }
+  }
   air.frequency.value = far(d).air
   send.gain.value = far(d).echo
+  let checked = c.currentTime
   return {
     into: gain,
     moveTo: (at) => {
       const t = c.currentTime
-      const now = far(Math.hypot(at[0] - ear.at[0], at[1] - ear.at[1], at[2] - ear.at[2]))
+      const d = Math.hypot(at[0] - ear.at[0], at[1] - ear.at[1], at[2] - ear.at[2])
+      if (t - checked >= WALL_CHECK) {
+        checked = t
+        const behind = walled(at, d)
+        if (behind !== wall) through.gain.setTargetAtTime(behind ? carry.wallGain : 1, t, WALL_RAMP / 3)
+        wall = behind
+      }
+      const now = far(d)
       pan.positionX.setTargetAtTime(at[0], t, 0.02)
       pan.positionY.setTargetAtTime(at[1], t, 0.02)
       pan.positionZ.setTargetAtTime(at[2], t, 0.02)
-      air.frequency.setTargetAtTime(now.air, t, 0.05)
+      air.frequency.setTargetAtTime(now.air, t, WALL_RAMP / 3)
       send.gain.setTargetAtTime(now.echo, t, 0.05)
     },
   }
@@ -287,7 +363,7 @@ export function playRecorded(name: string, p: Placed): boolean {
   const buf = pick(name)
   if (!buf) return false
   const c = audio()
-  const r = route({ ...p, volume: p.volume * e.gain })
+  const r = route({ ...p, volume: p.volume * e.gain }, 'sound')
   if (!c || !r) return true
   const s = c.createBufferSource()
   s.buffer = buf

@@ -204,7 +204,7 @@ export function framed(picture: Texture | null, name: string | null, size: numbe
   const owned: { dispose(): void }[] = []
   const canvasMat = paint(
     new MeshStandardMaterial({ color: picture ? '#ffffff' : '#3a2a1e', map: picture, emissiveMap: picture, emissive: new Color(picture ? '#ffffff' : '#000000'), emissiveIntensity: 0.3, roughness: 0.75 }),
-    { stroke: 0.3, relief: 0.45, bands: 0, tone: 0.05, hatch: 0.03, ink: 0 },
+    { stroke: 0.3, relief: 0.45, bands: 0, tone: 0.05, ink: 0 },
   )
   owned.push(canvasMat)
   const canvas = new Mesh(new PlaneGeometry(w, h), canvasMat)

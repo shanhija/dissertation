@@ -5,4 +5,6 @@ The taunts are said on the host's computer by [Kokoro-82M](https://huggingface.c
 - [`sources.json`](sources.json) pins the revision and names every file with its SHA-256.
 - [`fetch.ts`](fetch.ts) downloads what is missing or wrong and checks each file against its hash. A fetch is skipped while `sources.json` and the script are unchanged.
 
+- [`bench.ts`](bench.ts) (`npm run voice:bench`) is a listening bench: it says three fixed lines as written and in each of the six tones, in four men's and four women's voices, into `node_modules/.cache/voice-bench/`, and writes an `index.html` there that plays every variant said so far side by side, with the recipe on each button. `--melody middle`, `--swing <x>` and `--whole` make variants to compare; `--name` names one. Tune `TONES`, `PAUSE` and the ranges in `speakerOf` (`src/server/voice.ts`) or `NOTES` (`voice-worker.ts`), say them again, and listen.
+
 How the game uses it is in `src/server/voice.ts`.

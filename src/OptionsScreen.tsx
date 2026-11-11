@@ -51,6 +51,7 @@ const LIGHT_ROWS: {
       ['exposure', 'Exposure', 'Everything brighter or darker', (v) => `${v.toFixed(2)}×`],
       ['ambient', 'Ambient', "The sky's light from all round", (v) => v.toFixed(2)],
       ['reflections', 'Reflections', 'What shiny things reflect', (v) => v.toFixed(2)],
+      ['indoor', 'Under a roof', 'How much ambient and reflection reaches inside', (v) => `${Math.round(v * 100)}%`],
       ['sun', 'Sun', null, (v) => v.toFixed(1)],
       ['sunHeight', 'Sun height', null, (v) => `${v}°`],
       ['sunTurn', 'Sun direction', null, (v) => `${v}°`],
@@ -74,7 +75,7 @@ const LIGHT_ROWS: {
     rows: [
       ['bands', 'Light bands', 'Smooth to light, mid and dark', (v) => `${Math.round(v * 100)}%`],
       ['hatching', 'Hatching', 'Engraved lines in the shadows', (v) => `${Math.round(v * 100)}%`],
-      ['hatchSize', 'Hatching size', 'How far apart the lines are', (v) => `${v.toFixed(1)}×`],
+      ['hatchSpacing', 'Hatching spacing', 'Pixels between the lines', (v) => `${v.toFixed(1)} px`],
       ['dust', 'Dust', 'Settled on what faces up', (v) => `${Math.round(v * 100)}%`],
       ['grain', 'Paper grain', null, (v) => `${Math.round(v * 100)}%`],
       ['matte', 'Matte', 'As dull as paper', (v) => `${Math.round(v * 100)}%`],

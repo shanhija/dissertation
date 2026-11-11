@@ -17,6 +17,8 @@ export interface Lighting {
   ambient: number
   /** What shiny surfaces reflect of a soft room round them. */
   reflections: number
+  /** How much of the light from all round (ambient and reflections) reaches under a roof: a roofed hall is lit by its lamps and windows, not by an open sky. */
+  indoor: number
   sun: number
   /** Degrees above the horizon. */
   sunHeight: number
@@ -42,9 +44,9 @@ export interface Lighting {
   rim: number
   /** The paper's grain in relief. */
   grain: number
-  /** Engraved lines in the shadows, and how far apart (times each surface's own spacing). */
+  /** Engraved lines in the shadows, and how far apart on the screen (the page's pixels), whatever the size of the thing, how far away, or the drawing's resolution. */
   hatching: number
-  hatchSize: number
+  hatchSpacing: number
   /** Dust settled on what faces up. */
   dust: number
   /** 0 as made, 1 everything matte as paper. */
@@ -64,6 +66,7 @@ export const LIGHTING: Lighting = {
   exposure: 1,
   ambient: 0.9,
   reflections: 0.55,
+  indoor: 0.6,
   sun: 2.6,
   sunHeight: 50,
   sunTurn: 38,
@@ -79,7 +82,7 @@ export const LIGHTING: Lighting = {
   rim: 0.15,
   grain: 0.5,
   hatching: 0.7,
-  hatchSize: 1.6,
+  hatchSpacing: 8,
   dust: 0.35,
   matte: 0.5,
   colour: 0.85,
@@ -94,6 +97,7 @@ export const RANGES: Record<keyof Lighting, [number, number, number]> = {
   exposure: [0.3, 2.5, 0.05],
   ambient: [0, 3, 0.05],
   reflections: [0, 2, 0.05],
+  indoor: [0, 1, 0.05],
   sun: [0, 8, 0.1],
   sunHeight: [5, 89, 1],
   sunTurn: [0, 359, 1],
@@ -109,7 +113,7 @@ export const RANGES: Record<keyof Lighting, [number, number, number]> = {
   rim: [0, 1, 0.05],
   grain: [0, 1.5, 0.05],
   hatching: [0, 1.5, 0.05],
-  hatchSize: [0.5, 4, 0.1],
+  hatchSpacing: [3, 24, 0.5],
   dust: [0, 1.5, 0.05],
   matte: [0, 1, 0.05],
   colour: [0, 1.5, 0.05],

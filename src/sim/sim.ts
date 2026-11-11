@@ -9,13 +9,15 @@
 import RAPIER, { type Collider, type KinematicCharacterController, type RigidBody, type World } from '@dimforge/rapier3d-compat'
 
 import {
+  BARE_HANDS,
   BUDGET_WINDOW,
+  CRATE_OWNER_ONLY,
   FALL_DAMAGE,
+  FISTS_BUDGET,
   GRAVITY,
   HIT_CAP,
   HANDS,
   HOLD_MAX,
-  HOLD_REST,
   NO_INPUT,
   PER_SECOND_CAP,
   SHOVE_DAMAGE,
@@ -33,6 +35,7 @@ import {
   type MaterialName,
   type Me,
   type MoverSnap,
+  type Origin,
   type Prim,
   type Quat,
   type Recipe,
@@ -75,6 +78,10 @@ const CRATE_HALF = 0.45
 /** How far above a doctor's feet (a jump) and below them (a drop) a crate may come in. */
 const CRATE_RISE = 1
 const CRATE_DROP = 3
+/** A crate first tries to come in within this angle (radians) either side of where its asker looks, so they see it come. */
+const CRATE_FRONT = (50 * Math.PI) / 180
+/** The asker's words a crate keeps, at most. */
+const ASK_SHOWN = 60
 const THROW_SPEED = 16
 const THROWN_DAMAGE = 6
 /** A made thing's code that throws this many times stops: it fizzles. */
@@ -93,6 +100,11 @@ const MAX_SHOWN = 600
 export const FLOP = 11.5
 /** Seconds after getting up when knocks only push. */
 const FLOP_REST = 1.5
+/** A hard landing this soon after a blow is the blow's doing (charged to its thing's budget); a fall out of the arena this soon, credited to its doer. */
+const LANDING_BLAME = 3
+const FALL_OUT_BLAME = 5
+/** Seconds between two words that one thing is spent on one doctor. */
+const SPENT_EVERY = 2
 /** A dismissed doctor's body lies this long, then sinks through the floor and is gone. */
 const DEAD_LIES = 7
 const DEAD_GONE = 8.5
@@ -217,7 +229,8 @@ export interface Doctor {
   hurtAt: number
   hurtLog: { by: string; t: number; amount: number }[]
   shoveAt: number
-  curse: { text: string; uses: number } | null
+  /** What their next request(s) must follow, and whose it is (a player, or null: the arena). */
+  curse: { text: string; uses: number; by: string | null } | null
   lastPos: Vec3
   /** Seconds held in a row (see HOLD_MAX), and until when they are free of holds. */
   heldFor: number
@@ -237,14 +250,26 @@ export interface Doctor {
   /** Knocked flat: how fast the body went before this step's contacts and the step before, for what it strikes. */
   ragSpeed: number
   ragSpeedBefore: number
+  /** What their bare hands have taken (shoves), budgeted as a thing's is, at FISTS_BUDGET. */
+  fists: Ledger
+  /** The last time another doctor hurt them or moved them through made code, and how: a landing soon after is charged to it, a fall out credited. */
+  lastBlow: { src: Source; t: number } | null
 }
 
-/** Who did it: a player through a thing, a shove, or the arena. */
+/** Who did it: a player through a thing or their bare hands, or the arena. */
 export interface Source {
   attacker: string | null
   thing: Thing | null
-  /** In the out line: the thing's name, 'a shove', 'the arena'. */
+  /** The attacker's bare hands, when it is a shove: budgeted as a thing is. */
+  fists: Ledger | null
+  /** In the hit and the out line: the thing's name, 'a shove', 'a fall', 'the arena'. */
   what: string
+}
+
+/** What a budget counts: what was taken, from whom and when (the last BUDGET_WINDOW seconds count), and when it last said it was spent on each player. */
+export interface Ledger {
+  hits: { victim: string; t: number; amount: number }[]
+  shown: Map<string, number>
 }
 
 export interface Handlers {
@@ -273,6 +298,8 @@ export interface Thing {
   dead: boolean
   /** What it has taken, from whom and when: its budget counts the last BUDGET_WINDOW seconds. */
   hits: { victim: string; t: number; amount: number }[]
+  /** When it last said it was spent on each player. */
+  shown: Map<string, number>
   /** When it last hurt each player, for the rule that it never reaches everyone at once. */
   lately: Map<string, number>
   poses: Record<string, Vec3>
@@ -285,6 +312,8 @@ export interface Thing {
   speedBefore: number
   /** Its holder looks like this model instead of a doctor (a model id), or not. */
   disguise: string | null
+  /** How it came out of its crate (null: from none). */
+  origin: Origin | null
 }
 
 export interface Body {
@@ -357,6 +386,9 @@ export interface Zone {
   dead: boolean
 }
 
+/** How a crate's thing came: designed from the asker's words (twisted by the genie or not, under a curse's words or none), or from the archive. */
+export type Made = { archive: false; genie: boolean; curse: string | null } | { archive: true }
+
 export interface Crate {
   id: string
   owner: string
@@ -367,6 +399,12 @@ export interface Crate {
   /** How far it has come in, 0..1. */
   arrived: number
   kind: ThingKind | null
+  /** The asker's words, cut to ASK_SHOWN; null for the random button. */
+  ask: string | null
+  /** How its thing came, once filled. */
+  made: Made | null
+  /** When it turned ready in a live round (one ready before, in the countdown, when the round went live): for CRATE_OWNER_ONLY seconds after, only its owner may open it. */
+  readyAt: number | null
 }
 
 export interface Mover {
@@ -574,6 +612,8 @@ export class Sim {
       floor: null,
       ragSpeed: 0,
       ragSpeedBefore: 0,
+      fists: { hits: [], shown: new Map() },
+      lastBlow: null,
     }
     this.own(collider, { kind: 'doctor', id })
     this.doctors.set(id, d)
@@ -692,7 +732,7 @@ export class Sim {
     return out
   }
 
-  /** Counts how long a doctor has been held; past HOLD_MAX the holds end and they are free of new ones for HOLD_REST. */
+  /** The control rule for a doctor standing (see HOLD_MAX): held seconds count up, free ones down. */
   private holdRule(d: Doctor, fx: Fx, dt: number): Fx {
     const pinned = d.tugged || d.forced >= FORCED
     d.pinned = pinned
@@ -704,17 +744,27 @@ export class Sim {
     }
     d.heldFor += dt
     if (d.heldFor < HOLD_MAX) return fx
-    d.heldFor = 0
-    d.freeUntil = this.time + HOLD_REST
-    d.effects = d.effects.filter((e) => !holds(e) && e.speed >= 0.5 && e.jump >= 0.5)
+    this.shakeFree(d)
     // Ties and fields let go of them (forces.ts leaves the free alone), and what they pulled stops.
     if (pinned) {
       d.pinned = false
       d.push = [0, 0, 0]
       d.vy = Math.min(d.vy, 0)
     }
-    this.emit({ type: 'burst', at: add(d.pos, [0, 1, 0]), color: '#f4ecd8', size: 0.7, count: 14, glow: false })
     return this.fx(d)
+  }
+
+  /**
+   * Held HOLD_MAX in all: the holds end, and for as long again no hold takes and knocks only push.
+   * A ragdoll is not stood up (it may be flying): it lies on and gets up as it would, and its free
+   * time starts when it does.
+   */
+  private shakeFree(d: Doctor): void {
+    d.heldFor = 0
+    d.freeUntil = this.time + HOLD_MAX
+    d.flopFree = Math.max(d.flopFree, this.time + HOLD_MAX)
+    d.effects = d.effects.filter((e) => !holds(e) && e.speed >= 0.5 && e.jump >= 0.5)
+    this.emit({ type: 'burst', at: add(d.pos, [0, 1, 0]), color: '#f4ecd8', size: 0.7, count: 14, glow: false })
   }
 
   private stepDoctor(d: Doctor, dt: number): void {
@@ -864,11 +914,13 @@ export class Sim {
     d.grounded = false
   }
 
+  /** Out of the arena: back at a spawn point, for FALL_DAMAGE credited to whoever last moved or hurt them, if lately (outside every budget and cap: a fall out always costs its FALL_DAMAGE). */
   private fallOut(d: Doctor): void {
     if (d.rag) {
       this.endRag(d)
       d.collider.setEnabled(true)
     }
+    const blow = this.blowWithin(d, FALL_OUT_BLAME)
     const spawn = this.freeSpawn()
     this.emit({ type: 'sound', at: [...d.pos], sound: 'splat', pitch: 0.7 })
     d.pos = [...spawn.p]
@@ -877,7 +929,9 @@ export class Sim {
     d.push = [0, 0, 0]
     d.vy = 0
     d.body.setTranslation({ x: d.pos[0], y: d.pos[1] + CENTER * d.size, z: d.pos[2] }, true)
-    if (this.live) this.harm(d, FALL_DAMAGE, { attacker: null, thing: null, what: 'a long fall' })
+    if (this.live) this.take(d, FALL_DAMAGE, { attacker: blow?.attacker ?? null, thing: null, fists: null, what: 'a fall from the arena' })
+    // Back in, they start clean: nothing after is put down to that blow.
+    d.lastBlow = null
   }
 
   /** Puts a doctor at a spawn point with full credibility, empty hands and no effects: the start of a round. */
@@ -898,6 +952,7 @@ export class Sim {
     d.effects = []
     d.heldFor = 0
     d.freeUntil = -10
+    d.lastBlow = null
     d.curse = null
     d.collider.setEnabled(true)
     d.body.setTranslation({ x: d.pos[0], y: d.pos[1] + CENTER * d.size, z: d.pos[2] }, true)
@@ -940,7 +995,7 @@ export class Sim {
     }
     this.emit({ type: 'sound', at: this.handOf(d, hand), sound: 'whoosh', pitch: 1.2 })
     if (!target) return
-    this.harm(target, SHOVE_DAMAGE, { attacker: d.id, thing: null, what: 'a shove' })
+    this.harm(target, SHOVE_DAMAGE, { attacker: d.id, thing: null, fists: d.fists, what: 'a shove' })
     this.knock(target, add(scale(fwd, 10), [0, 4.5, 0]))
     this.emit({ type: 'sound', at: [...target.pos], sound: 'thud', pitch: 1 })
   }
@@ -961,45 +1016,82 @@ export class Sim {
   }
 
   /**
-   * Takes credibility, by the rules: at most HIT_CAP a hit; at most the thing's budget from one
-   * player in any BUDGET_WINDOW seconds; at most PER_SECOND_CAP a second from one attacker (the arena counts
-   * as one); and a thing never reaches every other player within one second when there are
-   * three or more. Returns what was taken. What was taken shows over the victim's head.
+   * Takes credibility, by the rules: at most HIT_CAP a hit; at most the thing's budget (bare
+   * hands': FISTS_BUDGET) from one player in any BUDGET_WINDOW seconds; at most PER_SECOND_CAP a
+   * second from one attacker (the arena counts as one); and a thing never reaches every other
+   * player within one second when there are three or more. Returns what was taken. What was
+   * taken shows over the victim's head; a hit the budget leaves nothing of says the thing is spent.
    */
   harm(victim: Doctor, amount: number, src: Source): number {
-    if (!this.live || !victim.alive || !(amount > 0)) return 0
+    if (!this.live || !victim.alive) return 0
+    this.blame(victim, src)
+    if (!(amount > 0)) return 0
     let take = Math.min(HIT_CAP, amount)
     const by = src.attacker ?? 'arena'
     victim.hurtLog = victim.hurtLog.filter((h) => h.t > this.time - 1)
     const lastSecond = victim.hurtLog.filter((h) => h.by === by).reduce((s, h) => s + h.amount, 0)
     take = Math.min(take, PER_SECOND_CAP - lastSecond)
     const thing = src.thing
+    const ledger = thing ?? src.fists
+    if (ledger) {
+      const left = Math.round(((thing ? thing.kind.budget : FISTS_BUDGET) - this.dealt(ledger, victim.id)) * 10) / 10
+      if (take > 0 && left <= 0) this.spent(victim, src, ledger)
+      take = Math.min(take, left)
+    }
     if (thing) {
-      take = Math.min(take, thing.kind.budget - this.dealt(thing, victim.id))
       const others = [...this.doctors.values()].filter((o) => o.alive && o.id !== src.attacker)
       const recent = new Set([...thing.lately].filter(([, t]) => t > this.time - 1).map(([id]) => id))
       if (others.length >= 3 && !recent.has(victim.id) && recent.size + 1 >= others.length) take = 0
     }
     take = Math.round(take * 10) / 10
     if (take <= 0) return 0
-    victim.cred = Math.max(0, Math.round((victim.cred - take) * 10) / 10)
-    victim.hurtAt = this.time
     victim.hurtLog.push({ by, t: this.time, amount: take })
-    if (thing) {
-      thing.hits = thing.hits.filter((h) => h.t > this.time - BUDGET_WINDOW)
-      thing.hits.push({ victim: victim.id, t: this.time, amount: take })
-      thing.lately.set(victim.id, this.time)
+    if (ledger) {
+      ledger.hits = ledger.hits.filter((h) => h.t > this.time - BUDGET_WINDOW)
+      ledger.hits.push({ victim: victim.id, t: this.time, amount: take })
     }
-    this.emit({ type: 'hit', victim: victim.id, amount: take, at: rv(add(victim.pos, [0, (EYE + 0.35) * victim.size, 0])), by: src.attacker })
-    if (victim.cred <= 0) this.out(victim, src)
-    return take
+    if (thing) thing.lately.set(victim.id, this.time)
+    return this.take(victim, take, src)
   }
 
-  /** What a thing has taken from one doctor in the last BUDGET_WINDOW seconds, against its budget. */
-  dealt(t: Thing, victim: string): number {
+  /** Takes credibility as it is, past every rule (what harm leaves of a blow, or a fall out), shown over the victim's head; at none left they are out. */
+  private take(victim: Doctor, amount: number, src: Source): number {
+    victim.cred = Math.max(0, Math.round((victim.cred - amount) * 10) / 10)
+    victim.hurtAt = this.time
+    this.emit({ type: 'hit', victim: victim.id, amount, at: rv(add(victim.pos, [0, (EYE + 0.35) * victim.size, 0])), by: src.attacker, what: src.what })
+    if (victim.cred <= 0) this.out(victim, src)
+    return amount
+  }
+
+  /** A thing (or bare hands) has nothing left to take from a doctor: says so, at most every SPENT_EVERY seconds, with when it may take again. */
+  private spent(victim: Doctor, src: Source, ledger: Ledger): void {
+    if (this.time - (ledger.shown.get(victim.id) ?? -SPENT_EVERY) < SPENT_EVERY) return
+    ledger.shown.set(victim.id, this.time)
+    const oldest = Math.min(...ledger.hits.filter((h) => h.victim === victim.id && h.t > this.time - BUDGET_WINDOW).map((h) => h.t))
+    this.emit({ type: 'spent', victim: victim.id, by: src.attacker, thing: src.thing ? src.thing.kind.name : BARE_HANDS, back: Math.ceil((oldest + BUDGET_WINDOW - this.time) * 10) / 10 })
+  }
+
+  /** What a thing (or a doctor's bare hands) has taken from one doctor in the last BUDGET_WINDOW seconds, against its budget. */
+  dealt(ledger: Ledger, victim: string): number {
     let sum = 0
-    for (const h of t.hits) if (h.victim === victim && h.t > this.time - BUDGET_WINDOW) sum += h.amount
+    for (const h of ledger.hits) if (h.victim === victim && h.t > this.time - BUDGET_WINDOW) sum += h.amount
     return sum
+  }
+
+  /**
+   * Another doctor hurt this one, or moved them through made code (a push, a topple, a blast, a
+   * field, a tie, a body that struck them, a teleport): a hard landing soon after is charged to
+   * it, and a fall out of the arena credited to its doer. What one does to oneself, the arena and
+   * the committee do, puts nothing down to anyone.
+   */
+  blame(d: Doctor, src: Source): void {
+    if (src.attacker === null || src.attacker === d.id || !this.doctors.has(src.attacker)) return
+    d.lastBlow = { src, t: this.time }
+  }
+
+  /** The last blow on a doctor, when it came within `secs`. */
+  private blowWithin(d: Doctor, secs: number): Source | null {
+    return d.lastBlow && this.time - d.lastBlow.t <= secs ? d.lastBlow.src : null
   }
 
   private out(d: Doctor, src: Source): void {
@@ -1029,6 +1121,8 @@ export class Sim {
     )
     d.ragSince = this.time
     d.ragStill = 0
+    // Lying counts for the control rule on its own; what pulled them standing no longer does.
+    d.pinned = false
     d.collider.setEnabled(false)
     d.walk = [0, 0, 0]
     d.push = [0, 0, 0]
@@ -1057,6 +1151,11 @@ export class Sim {
       if (age > DEAD_GONE) this.endRag(d)
       return
     }
+    // Lying knocked flat counts as held, but not once they have shaken free.
+    if (this.time >= d.freeUntil) {
+      d.heldFor += dt
+      if (d.heldFor >= HOLD_MAX) this.shakeFree(d)
+    }
     d.ragStill = len(v) < 1.2 ? d.ragStill + dt : 0
     if ((age > 0.8 && d.ragStill > 0.35) || age > 3.5) this.standUp(d)
   }
@@ -1067,7 +1166,9 @@ export class Sim {
     const ground = this.groundBelow([p[0], p[1] + 0.8, p[2]], 12)
     this.endRag(d)
     d.collider.setEnabled(true)
-    d.flopFree = this.time + FLOP_REST
+    // Shaken free while lying: free for the whole of it from now.
+    if (this.time < d.freeUntil) d.freeUntil = this.time + HOLD_MAX
+    d.flopFree = Math.max(d.flopFree, d.freeUntil, this.time + FLOP_REST)
     if (!ground) return this.fallOut(d)
     d.pos = [p[0], ground.y, p[2]]
     d.lastPos = [...d.pos]
@@ -1108,9 +1209,9 @@ export class Sim {
     if (d.effects.length > 12) d.effects.shift()
   }
 
-  /** Whether a doctor is held now (for code that asks, and for the drawing). */
+  /** Whether a doctor is held now, in any way the control rule counts (a hold, a rope or a field they cannot walk against, or lying knocked flat), for code that asks. */
   held(d: Doctor): boolean {
-    return d.alive && (holds(this.fx(d)) || d.pinned)
+    return d.alive && (d.rag !== null || holds(this.fx(d)) || d.pinned)
   }
 
   /** Knocks a doctor flat, thrown at v (only pushed, within FLOP_REST of getting up). */
@@ -1127,6 +1228,8 @@ export class Sim {
     if (d.rag) {
       this.endRag(d)
       d.collider.setEnabled(true)
+      // Up, as from getting up: not knocked flat again at once (else a topple and a teleport together would floor them at every use).
+      d.flopFree = Math.max(d.flopFree, this.time + FLOP_REST)
     }
     d.pos = [...p]
     d.lastPos = [...p]
@@ -1134,11 +1237,12 @@ export class Sim {
     d.body.setTranslation({ x: p[0], y: p[1] + CENTER * d.size, z: p[2] }, true)
   }
 
-  curse(d: Doctor, text: string, uses: number): void {
+  /** Lays a curse on a doctor's next request(s), by a player (null: the arena). */
+  curse(d: Doctor, text: string, uses: number, by: string | null): void {
     const t = String(text).trim().slice(0, 240)
     if (!t || !d.alive) return
-    d.curse = { text: t, uses: clamp(Math.round(uses) || 1, 1, 3) }
-    this.emit({ type: 'curse', victim: d.id, text: t })
+    d.curse = { text: t, uses: clamp(Math.round(uses) || 1, 1, 3), by }
+    this.emit({ type: 'curse', victim: d.id, text: t, by })
   }
 
   /** The curse that goes with this player's next request, one use spent. */
@@ -1174,6 +1278,7 @@ export class Sim {
       errors: 0,
       dead: false,
       hits: [],
+      shown: new Map(),
       lately: new Map(),
       poses: {},
       scale: 1,
@@ -1183,6 +1288,7 @@ export class Sim {
       speedBefore: 0,
       hand: 0,
       disguise: null,
+      origin: null,
     }
     this.things.set(t.id, t)
     const api = this.apiFor!(this, t)
@@ -1321,7 +1427,7 @@ export class Sim {
     let best = CRATE_REACH
     for (const c of this.crates.values()) {
       const dist = len(sub(c.p, add(d.pos, [0, 0.5, 0])))
-      if (c.state === 'ready' && dist < best) {
+      if (this.mayOpen(c, d) && dist < best) {
         best = dist
         crate = c
       }
@@ -1337,39 +1443,60 @@ export class Sim {
         thing = t
       }
     }
-    if (thing) this.give(d, thing)
+    if (thing) return this.give(d, thing)
+    // A crate in reach still only its asker's: they are told whose, and for how long.
+    const shut = [...this.crates.values()].find((c) => c.state === 'ready' && c.readyAt !== null && !this.mayOpen(c, d) && len(sub(c.p, add(d.pos, [0, 0.5, 0]))) < CRATE_REACH)
+    if (shut) this.emit({ type: 'notYet', who: d.id, owner: shut.owner, secs: Math.ceil(shut.readyAt! + CRATE_OWNER_ONLY - this.time) })
   }
 
   /**
-   * A doctor touching down at a speed: a hard landing costs credibility, put down to whoever hurt
-   * them in the last few seconds (a fall they were knocked into is theirs). A made thing that
-   * makes them jump higher makes landings from its own jumps safe.
+   * A doctor touching down at a speed: a hard landing costs credibility, put down to the last blow
+   * of the last few seconds and charged to its thing's budget (a fall they were knocked into is
+   * the knock's). A made thing that makes them jump higher makes landings from its own jumps safe.
    */
   private landed(d: Doctor, speed: number, jump: number): void {
     const safe = FALL_SAFE * Math.sqrt(Math.max(1, jump))
     if (speed <= safe) return
-    const by = d.hurtLog.filter((h) => h.t > this.time - 3 && h.by !== 'arena').at(-1)?.by ?? null
-    this.harm(d, (speed - safe) * FALL_HURT, { attacker: by, thing: null, what: 'a fall' })
+    const blow = this.blowWithin(d, LANDING_BLAME) ?? { attacker: null, thing: null, fists: null }
+    this.harm(d, (speed - safe) * FALL_HURT, { ...blow, what: 'a fall' })
   }
 
   // ---------------------------------------------------------------------------- crates
 
   /**
-   * A crate for a player, coming in a few metres from them where they can walk to it (`crateSpot`),
-   * nearer if nothing farther will do, and failing that where they stand (they are put aside when
-   * it arrives). Until it has come in it is only a sight: nothing touches it. Null when the player
-   * is not in the round.
+   * A crate for a player and the words they asked in (null: the random button), coming in a few
+   * metres from them where they can walk to it (`crateSpot`): where they look if it can, else all
+   * round them, nearer if nothing farther will do, and failing that where they stand (they are put
+   * aside when it arrives). Until it has come in it is only a sight: nothing touches it. Null when
+   * the player is not in the round.
    */
-  dropCrate(ownerId: string): Crate | null {
+  dropCrate(ownerId: string, ask: string | null): Crate | null {
     const d = this.doctors.get(ownerId)
     if (!d || !d.alive) return null
     let at: Vec3 | null = null
-    for (let k = 0; k < 24 && !at; k++) at = this.crateSpot(d, this.random() * Math.PI * 2, k < 16 ? 2.5 + this.random() * 2.5 : 1.3 + this.random() * 1.2)
+    for (let k = 0; k < 32 && !at; k++) {
+      // crateSpot's angle runs from +x toward +z; yaw from +z toward +x.
+      const angle = k < 8 ? Math.PI / 2 - d.yaw + (this.random() - 0.5) * 2 * CRATE_FRONT : this.random() * Math.PI * 2
+      at = this.crateSpot(d, angle, k < 24 ? 2.5 + this.random() * 2.5 : 1.3 + this.random() * 1.2)
+    }
     at ??= [d.pos[0], (this.groundBelow([d.pos[0], d.pos[1] + 1, d.pos[2]], 1 + CRATE_DROP)?.y ?? d.pos[1]) + CRATE_HALF + 0.02, d.pos[2]]
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(at[0], at[1], at[2]))
     const collider = this.world.createCollider(RAPIER.ColliderDesc.cuboid(CRATE_HALF, CRATE_HALF, CRATE_HALF).setCollisionGroups(groups(G.CRATE, ALL)), body)
     collider.setEnabled(false)
-    const c: Crate = { id: this.nextId('c'), owner: ownerId, body, p: at, state: 'arriving', arrived: 0, kind: null }
+    // Cut by characters, not UTF-16 units, so no emoji is split in half.
+    const words = ask === null ? null : [...ask.trim()]
+    const c: Crate = {
+      id: this.nextId('c'),
+      owner: ownerId,
+      body,
+      p: at,
+      state: 'arriving',
+      arrived: 0,
+      kind: null,
+      ask: words === null ? null : words.length <= ASK_SHOWN ? words.join('') : `${words.slice(0, ASK_SHOWN - 1).join('')}…`,
+      made: null,
+      readyAt: null,
+    }
     this.own(collider, { kind: 'crate', id: c.id })
     this.crates.set(c.id, c)
     this.emit({ type: 'sound', at: [...at], sound: 'hum', pitch: 0.7, volume: 0.7 })
@@ -1397,15 +1524,29 @@ export class Sim {
     return hit ? null : mid
   }
 
-  fillCrate(id: string, kind: ThingKind): void {
+  /** A crate's thing has come, and how (designed from the words, or from the archive): one that has come in turns ready. */
+  fillCrate(id: string, kind: ThingKind, made: Made): void {
     const c = this.crates.get(id)
     if (!c) return
     c.kind = kind
+    c.made = made
     this.useKind(kind)
     if (c.state === 'waiting') {
       c.state = 'ready'
+      c.readyAt = this.live ? this.time : null
       this.emit({ type: 'sound', at: [...c.p], sound: 'ring', pitch: 1.5 })
     }
+  }
+
+  /** Whether a doctor may open a crate now: it is ready, and theirs or ready for CRATE_OWNER_ONLY seconds of a live round. */
+  mayOpen(c: Crate, d: Doctor): boolean {
+    return c.state === 'ready' && (c.owner === d.id || (c.readyAt !== null && this.time >= c.readyAt + CRATE_OWNER_ONLY))
+  }
+
+  /** The round goes live: a crate that turned ready in the countdown, when nobody could open it, is its asker's alone from now. */
+  goLive(): void {
+    this.live = true
+    for (const c of this.crates.values()) if (c.state === 'ready') c.readyAt ??= this.time
   }
 
   private openCrate(c: Crate, d: Doctor): void {
@@ -1415,7 +1556,19 @@ export class Sim {
     this.emit({ type: 'burst', at: [...c.p], color: '#c8a26a', size: 1, count: 18, glow: false })
     this.emit({ type: 'sound', at: [...c.p], sound: 'crunch', pitch: 1 })
     const t = this.newThing(c.kind!, d, c.p)
-    this.emit({ type: 'opened', crate: c.id, by: d.id, thing: t.kind.name })
+    const made = c.made!
+    t.origin = { by: c.owner, ask: c.ask, genie: !made.archive && made.genie, archive: made.archive }
+    this.emit({
+      type: 'opened',
+      crate: c.id,
+      by: d.id,
+      owner: c.owner,
+      thing: t.kind.name,
+      ask: c.ask,
+      genie: !made.archive && made.genie,
+      archive: made.archive,
+      curse: made.archive ? null : made.curse,
+    })
   }
 
   /** The floor straight below a point: its height, whether it is flat enough to stand on, and the breakable piece it is part of (or null). */
@@ -1449,6 +1602,7 @@ export class Sim {
     c.arrived = Math.min(1, c.arrived + dt / CRATE_WARP)
     if (c.arrived < 1) return
     c.state = c.kind ? 'ready' : 'waiting'
+    if (c.kind && this.live) c.readyAt = this.time
     // Whoever stands where it comes in is put aside, the shortest way out, or onto it when a wall is that way.
     for (const d of this.doctors.values()) {
       if (!d.alive || d.rag) continue
@@ -1572,7 +1726,7 @@ export class Sim {
       if (d.id === t.thrownBy && this.time - t.thrownAt < 0.4) return
       const v = v3(t.body.linvel())
       if (Math.max(t.speed, t.speedBefore, len(v)) < 4) return
-      this.harm(d, THROWN_DAMAGE, { attacker: t.thrownBy, thing: t, what: t.kind.name })
+      this.harm(d, THROWN_DAMAGE, { attacker: t.thrownBy, thing: t, fists: null, what: t.kind.name })
       this.knock(d, add(scale(norm([v[0], 0, v[2]]), 6), [0, 3, 0]))
       this.emit({ type: 'sound', at: [...d.pos], sound: 'thud', pitch: 1.3 })
       t.thrownBy = null
@@ -1832,7 +1986,16 @@ export class Sim {
       poses: Object.keys(b.poses).length ? b.poses : null,
       trail: b.trail,
     }))
-    const crates: CrateSnap[] = [...this.crates.values()].map((c) => ({ id: c.id, p: rv(c.p), owner: c.owner, state: c.state, arrived: Math.round(c.arrived * 100) / 100 }))
+    const crates: CrateSnap[] = [...this.crates.values()].map((c) => ({
+      id: c.id,
+      p: rv(c.p),
+      owner: c.owner,
+      state: c.state,
+      arrived: Math.round(c.arrived * 100) / 100,
+      ask: c.ask,
+      archive: c.made !== null && c.made.archive,
+      ownerUntil: c.readyAt === null ? null : r3(c.readyAt + CRATE_OWNER_ONLY),
+    }))
     const movers: MoverSnap[] = this.arena ? [...this.arena.movers.values()].map((m) => ({ id: m.id, p: rv(v3(m.rb.translation())), q: rq(m.rb.rotation()) })) : []
     const end = (r: TieRef): TieEnd => (r.kind === 'point' ? { kind: 'point', p: rv(r.p) } : { kind: r.kind, id: r.id })
     const ties: TieSnap[] = this.ties.filter((t) => !t.dead).map((t) => ({ id: t.id, a: end(t.a), b: end(t.b), length: r3(t.length), spring: t.spring > 0, color: t.color, width: t.width }))
@@ -1864,14 +2027,13 @@ export class Sim {
   }
 
   /** What only this player sees, from the sim's side. */
-  me(id: string): Pick<Me, 'curse' | 'hands' | 'crate'> {
+  me(id: string): Pick<Me, 'curse' | 'hands'> {
     const d = this.doctors.get(id)
-    if (!d) return { curse: null, hands: [null, null], crate: false }
-    const info = (t: Thing | null): HeldInfo | null => (t ? { name: t.kind.name, description: t.kind.description, budget: t.kind.budget } : null)
+    if (!d) return { curse: null, hands: [null, null] }
+    const info = (t: Thing | null): HeldInfo | null => (t ? { name: t.kind.name, description: t.kind.description, budget: t.kind.budget, origin: t.origin } : null)
     return {
-      curse: d.curse?.text ?? null,
+      curse: d.curse ? { text: d.curse.text, by: d.curse.by } : null,
       hands: [info(this.inHand(d, 0)), info(this.inHand(d, 1))],
-      crate: [...this.crates.values()].some((c) => c.owner === id),
     }
   }
 

@@ -53,7 +53,7 @@ function facing(g: BufferGeometry, away: (centre: Vector3) => Vector3) {
 describe('a recipe as three.js', () => {
   it('merges each part into one solid geometry and one glowing one, every vertex coloured', () => {
     const { recipe } = buildRecipe(everything)
-    const model = buildModel(recipe)
+    const model = buildModel(recipe, 'drawn')
     expect([...model.parts.keys()].sort()).toEqual([null, 'arm', 'wheel'].sort())
     const own = model.parts.get(null)!
     expect(own.glow).toBeNull()
@@ -75,7 +75,7 @@ describe('a recipe as three.js', () => {
   it('stands where the kit measured it: the model at rest fills the recipe bounds', () => {
     const { recipe } = buildRecipe(everything)
     const box = new Box3()
-    for (const [part, g] of buildModel(recipe).parts) {
+    for (const [part, g] of buildModel(recipe, 'drawn').parts) {
       const { p, r } = partTransform(recipe.parts, part)
       for (const geo of [g.solid, g.glow]) {
         if (geo === null) continue
@@ -97,20 +97,20 @@ describe('a recipe as three.js', () => {
 
   it('draws a tube that goes nowhere as a ball, not as nothing', () => {
     const { recipe } = buildRecipe((m) => m.tube([[0, 0.2, 0], [0, 0.2, 0]], 0.05))
-    const g = buildModel(recipe).parts.get(null)!.solid!
+    const g = buildModel(recipe, 'drawn').parts.get(null)!.solid!
     g.computeBoundingSphere()
     expect(g.boundingSphere!.radius).toBeCloseTo(0.05, 5)
   })
 
   it('keeps a mirrored shape facing out', () => {
     const { recipe } = buildRecipe((m) => m.extrude([[0, 0], [1, 0], [0, 1]], 0.2, { scale: [-1, 1, 1] }))
-    const g = buildModel(recipe).parts.get(null)!.solid!
+    const g = buildModel(recipe, 'drawn').parts.get(null)!.solid!
     const { faces, agree } = facing(g, () => new Vector3())
     expect(agree).toBe(faces)
     expect(faces).toBe(triangles(g))
   })
 
-  it('faces a lathe outward whichever way its points run, and a flat one up', () => {
+  it('faces a lathe outward whichever way its points run, and a flat one up (as a collider has it: once)', () => {
     // A tree crown, its points bottom to top and top to bottom: both a dome seen from outside.
     const up = [
       [0, 0.6],
@@ -121,7 +121,7 @@ describe('a recipe as three.js', () => {
     ]
     for (const points of [up, [...up].reverse()]) {
       const { recipe } = buildRecipe((m) => m.lathe(points, { color: '#3cb043' }))
-      const g = buildModel(recipe).parts.get(null)!.solid!
+      const g = buildModel(recipe, 'collider').parts.get(null)!.solid!
       const { out, agree, faces } = facing(g, (c) => c.clone().sub(new Vector3(0, 1.8, 0)))
       expect(out).toBe(faces)
       expect(agree).toBe(faces)
@@ -137,7 +137,7 @@ describe('a recipe as three.js', () => {
         [0, 0.5],
       ],
     ]) {
-      const g = buildModel(buildRecipe((m) => m.lathe(points)).recipe).parts.get(null)!.solid!
+      const g = buildModel(buildRecipe((m) => m.lathe(points)).recipe, 'collider').parts.get(null)!.solid!
       const { out, faces } = facing(g, () => new Vector3(0, 1, 0))
       expect(out).toBe(faces)
     }

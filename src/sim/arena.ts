@@ -12,7 +12,7 @@ import RAPIER from '@dimforge/rapier3d-compat'
 import { MATERIALS, type ArenaDecor, type ArenaLight, type ArenaPortrait, type ArenaSolid, type MaterialName, type Sky, type Vec3 } from '../protocol'
 import { arenaWorld, colorOr, recipeOf, thingApi } from './api'
 import { finishPiece, type Piece } from './breaking'
-import { call } from './sandbox'
+import { TOO_SLOW, call, callFor } from './sandbox'
 import { recipeTriangles } from './shapes'
 import { DT, G, Sim, eulerQuat, finiteVec, groups, type Mover } from './sim'
 
@@ -35,6 +35,14 @@ const MAX_LIGHTS = 12
 const MAX_PORTRAITS = 12
 /** Triangles all the shaped solid pieces of an arena may have together, for their colliders. */
 const MAX_SHAPED_TRIANGLES = 120_000
+/**
+ * Real milliseconds an arena's code may take to build it, everything it builds included. The kept
+ * arenas build in 0.4 to 61 ms on a quiet host, in up to 232 ms with every core busy and up to
+ * 344 ms with twice as many busy threads as cores. The build runs on the game's own thread, often
+ * while a round is played, so one that would never end holds the round up this long, once for
+ * each of an arena's three tries.
+ */
+export const BUILD_MS = 1000
 
 const materialOf = (m: unknown): MaterialName => (MATERIALS.includes(m as MaterialName) ? (m as MaterialName) : 'plain')
 export const ARENA_REACH = 90
@@ -240,10 +248,10 @@ export function buildArena(sim: Sim, src: ArenaSource): void {
     },
   })
 
-  const r = call(src.build, null, a, w)
+  const r = callFor(BUILD_MS, src.build, null, a, w)
   if (!r.ok) {
     sim.arena = null
-    throw new Error(`the arena would not build: ${r.error}`)
+    throw new Error(r.error.includes(TOO_SLOW) ? `the arena took over ${BUILD_MS} ms to build and was stopped (${r.error}): build it lighter, with less work in its loops and fewer shapes` : `the arena would not build: ${r.error}`)
   }
   if (spawns.length === 0) {
     sim.arena = null

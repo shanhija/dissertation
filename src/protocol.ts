@@ -14,25 +14,46 @@ export const WS_PATH = '/ws'
 export const TICK_HZ = 60
 export const MAX_PLAYERS = 8
 export const START_CRED = 100
-export const WINS_TO_MATCH = 5
+/**
+ * The rounds a doctor must win to take the match, as the chair may set them; left to the room,
+ * fewer in a bigger room (5 for 2 to 3 doctors, 4 for 4 to 5, 3 for 6 to 8), fixed at the match's
+ * first round.
+ */
+export const MATCH_WINS = [3, 4, 5, 7] as const
+export type MatchWins = (typeof MATCH_WINS)[number]
 /** One hit takes at most this much credibility. */
 export const HIT_CAP = 10
 /** One player (or the arena) takes at most this much a second from another. */
 export const PER_SECOND_CAP = 20
-/** A doctor held (unable to walk, or kept from their hands) this many seconds in a row is free of holds for HOLD_REST. */
+/**
+ * The control rule: seconds a doctor cannot play (held still, kept from their hands, all but blind,
+ * pulled by what they cannot walk against, or lying knocked flat) count up and free seconds count
+ * down; at this many they shake free, and for as long again no hold takes and knocks only push.
+ */
 export const HOLD_MAX = 5
-export const HOLD_REST = 2
 /** What a thing may take from one player in any BUDGET_WINDOW seconds: most 10, a hard-to-hit or risky one 20. */
 export const BUDGETS = [10, 20] as const
 /** Seconds over which a thing's budget counts; then it may take again (weapons felt like they had "1-2 charges"). */
 export const BUDGET_WINDOW = 20
 export type Budget = (typeof BUDGETS)[number]
+/** Bare hands are budgeted like a thing: a shove takes SHOVE_DAMAGE, at most this much from one player in any BUDGET_WINDOW seconds (the push is never budgeted). */
+export const FISTS_BUDGET: Budget = BUDGETS[0]
+/** What the 'spent' event calls a doctor's bare hands. */
+export const BARE_HANDS = 'bare hands'
 export const SHOVE_DAMAGE = 3
+/** A fall out of the arena: credited to whoever last moved or hurt the doctor within a few seconds, and always this much, outside every budget and cap. */
 export const FALL_DAMAGE = 10
+/**
+ * Seconds a crate that has turned ready opens only for its asker; then anyone may open it
+ * (2026-11-11: "make boxes only open for requester for the first three seconds, then they can be opened by anyone").
+ */
+export const CRATE_OWNER_ONLY = 3
 /** Seconds between two requests of one player. */
 export const REQUEST_COOLDOWN = 15
-/** Seconds from a request to its crate opening, designed or not. */
+/** Seconds from a request to its crate opening, designed or not (a crate brought to one's defence: from the round going live). */
 export const DESIGN_LIMIT = 30
+/** Seconds more a crate waits when its design failed its trial and went back to be fixed. */
+export const FIX_GRACE = 15
 /** Seconds a break may go on once the arena is ready and someone is not. */
 export const READY_WAIT = 60
 /** Seconds from everyone ready to the round ("when everyone is ready, then the game should start in 5 sec"), counted down in the arena. */
@@ -53,6 +74,8 @@ export type ArenaSetting = 'academic' | 'anything'
 export interface Settings {
   bots: number
   arena: ArenaSetting
+  /** The rounds to win the match, or null: by the room. */
+  wins: MatchWins | null
 }
 
 /** Where worn parts go. The hand is for the thing held. */
@@ -114,6 +137,8 @@ export interface PlayerInfo {
   wins: number
   chair: boolean
   connected: boolean
+  /** What they bring to their defence this break: nothing asked yet, waiting its turn for a designer, being made, made, or failed (a thing from the archive waits instead). */
+  bringing: 'none' | 'queued' | 'making' | 'ready' | 'failed'
 }
 
 /** The next arena: being built (for since seconds; it nearly always takes at most expect), built, or none on the way. */
@@ -130,6 +155,8 @@ export interface Lobby {
   arena: ArenaStatus
   /** Who won the last round or the match, for the end screens. */
   winner: string | null
+  /** The rounds to win this match (the next one, between matches). */
+  wins: MatchWins
   /** Addresses friends open, as the server sees its own network. */
   join: string[]
 }
@@ -279,6 +306,12 @@ export interface CrateSnap {
   state: 'arriving' | 'waiting' | 'ready'
   /** How far it has come in, 0..1. */
   arrived: number
+  /** The asker's words (cut short), or null for something nobody has had (the random button). */
+  ask: string | null
+  /** Its thing came from the archive (the design failed or came too late), not from the asker's words. */
+  archive: boolean
+  /** Server seconds (Snap.t) until which only its owner may open it (CRATE_OWNER_ONLY); null until it is ready in a live round. */
+  ownerUntil: number | null
 }
 
 export interface MoverSnap {
@@ -288,7 +321,14 @@ export interface MoverSnap {
 }
 
 export type GameEvent =
-  | { type: 'hit'; victim: string; amount: number; at: Vec3; by: string | null }
+  /** Credibility taken: by whom (null: the arena or nobody; 'committee': its patience), and with what (a thing's name, 'a shove', 'a fall', 'a fall from the arena', 'the arena', "the committee's patience"). */
+  | { type: 'hit'; victim: string; amount: number; at: Vec3; by: string | null; what: string }
+  /**
+   * A thing (or bare hands) that has taken all its budget from this doctor struck them again and
+   * took nothing: said at most once per thing and doctor every few seconds. back: seconds until it
+   * may take from them again. The caps (a hit, a second) say nothing.
+   */
+  | { type: 'spent'; victim: string; by: string | null; thing: string; back: number }
   | { type: 'out'; victim: string; by: string | null; what: string }
   /** Bits flying from a point: all round, or toward dir within spread (0 a jet, 1 all round); speed and secs null: by size. */
   | { type: 'burst'; at: Vec3; color: string; size: number; count: number; glow: boolean; speed?: number | null; secs?: number | null; dir?: Vec3 | null; spread?: number }
@@ -308,8 +348,15 @@ export type GameEvent =
    * up and drops whole, with no crash of its own.
    */
   | { type: 'break'; piece: string; at: Vec3; material: MaterialName; color: string; size: number; fell: boolean }
-  | { type: 'curse'; victim: string; text: string }
-  | { type: 'opened'; crate: string; by: string; thing: string }
+  /** A curse laid on a doctor's next request (a review, by a player dismissed; or a thing's), by whom (a player, or null: the arena). */
+  | { type: 'curse'; victim: string; text: string; by: string | null }
+  /** A doctor pressed E at a crate that is still only its asker's: secs until anyone may open it. */
+  | { type: 'notYet'; who: string; owner: string; secs: number }
+  /**
+   * A crate opened by `by`, asked for by `owner` in these words (null: the random button); its
+   * thing came twisted by the genie, or from the archive, or under a curse's words (null: none).
+   */
+  | { type: 'opened'; crate: string; by: string; owner: string; thing: string; ask: string | null; genie: boolean; archive: boolean; curse: string | null }
   /** A doctor did something with a hand, for the drawing to show. */
   | { type: 'act'; who: string; act: 'use' | 'alt' | 'throw' | 'shove' | 'pick'; hand: Hand }
   | { type: 'fizzle'; thing: string; holder: string | null }
@@ -349,23 +396,36 @@ export interface Snap {
   events: GameEvent[]
 }
 
+/** How a thing came out of its crate: asked for by a player in these words (null: something nobody has had), twisted by the genie, or from the archive in their place. */
+export interface Origin {
+  by: string
+  ask: string | null
+  genie: boolean
+  archive: boolean
+}
+
 export interface HeldInfo {
   name: string
   description: string
   budget: Budget
+  /** Null for a thing that came from no crate. */
+  origin: Origin | null
 }
 
 /** What only this player sees. */
 export interface Me {
   /** Seconds until the next request may go. */
   cooldown: number
-  /** A crate of theirs is in the air or waiting. */
+  /** A crate they asked for in the round is in the air or waiting (the one brought to their defence aside). */
   crate: boolean
-  curse: string | null
+  /** Their next request is under review: the words, and whose (a player, or null: the arena). */
+  curse: { text: string; by: string | null } | null
   /** What is in each hand (0 left, 1 right). */
   hands: [HeldInfo | null, HeldInfo | null]
   /** The last request's fate, shown for a moment. */
   note: string | null
+  /** They may write a review now: dismissed in a round, with a name, and none written yet this round (of a player: bots ask for nothing). */
+  review: boolean
 }
 
 /**
@@ -478,6 +538,10 @@ export type ClientMsg =
   | { type: 'writing'; on: boolean }
   | { type: 'request'; text: string }
   | { type: 'random' }
+  /** What they will bring to their defence, as written so far (empty: something nobody has had). */
+  | { type: 'bring'; text: string }
+  /** A dismissed player's review of a doctor still in, laid on that doctor's next request. */
+  | { type: 'review'; target: string; text: string }
   | { type: 'taunt' }
   | { type: 'settings'; settings: Settings }
   | { type: 'endRound' }

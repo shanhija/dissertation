@@ -13,17 +13,19 @@
  * Every doctor is an old British orator (2026-11-10: "can you make the taunts male and more
  * pomptous and oldish?", then "can be woman as well. i'd prefer a bit more similar to old british
  * style with lots of tone changes", "i meant notes. high to low to high"): English phonemes, slow,
- * the melody widened (each note moved away from the line's middle note, so the highs go higher and
- * the lows lower), and played back a little slower than Kokoro said it (Kokoro is asked to hurry
- * by as much), which lowers the pitch and the whole voice as in an older speaker, with a slight
- * tremble of age.
+ * the melody widened, and played back a little slower than Kokoro said it (Kokoro is asked to
+ * hurry by as much), which lowers the pitch and the whole voice as in an older speaker, with a
+ * slight tremble of age.
  *
- * Each line is said in a tone: the doctor's prosody (pitch, pace, intonation) is pulled toward
+ * A line is written as one or two phrases, each with its tone (2026-11-11), and each phrase is
+ * said by Kokoro on its own in its tone, so the tone changes within a line and every phrase starts
+ * high again; a pause joins them. The doctor's prosody (pitch, pace, intonation) is pulled toward
  * voices of their own sex that speak that way while the timbre stays theirs, and the melody is
  * widened by the tone's swing. Measured (2026-11-10), before the swing and the age: booming lowers
  * the pitch and slows down, indignant raises it about a fifth and hurries, gloating swings it
  * wider, hushed is slower and breathier, sniffy is slower and flatter. The ear has the last word:
- * TONES and the ranges in speakerOf are what to tune.
+ * TONES, PAUSE, MELODY and the ranges in speakerOf are what to tune, and `npm run voice:bench`
+ * says a grid of them to listen to.
  */
 
 import fs from 'node:fs'
@@ -52,27 +54,35 @@ const LEADING: Record<Sex, KokoroVoice[]> = {
 /** Voices by weight (the worker divides by the sum). */
 export type Mix = [KokoroVoice, number][]
 
-export type Tone = 'plain' | 'booming' | 'indignant' | 'gloating' | 'hushed' | 'sniffy'
+export const TONE_NAMES = ['plain', 'booming', 'indignant', 'gloating', 'hushed', 'sniffy'] as const
+export type Tone = (typeof TONE_NAMES)[number]
+
+/** A line is said as phrases, each in its own tone. */
+export interface Phrase {
+  text: string
+  tone: Tone
+}
 
 interface ToneRecipe {
   /** The voices that speak this way, of each sex: only their prosody (pitch, pace, intonation) is taken. */
   toward: Record<Sex, Mix>
   /** How far the prosody goes toward them, 0..1. */
   prosody: number
-  /** How far the melody is widened: each note's distance from the line's middle note, on a log scale, times this. */
+  /** How far the melody is widened: each note's distance from its centre (MELODY), on a log scale, times this. */
   swing: number
   /** Times the doctor's own pace. */
   speed: number
-  /** Loudness against a plain line, dB. */
+  /** Loudness against a plain phrase, dB. */
   db: number
 }
 
 /**
  * Pulling a voice toward the other sex pulls it toward their pitch (Emma's prosody lifted the men
  * 35 Hz), so each tone pulls toward voices of the doctor's own sex, but hushed: Nicole's slow,
- * breathy delivery, which lifts a man only about 10 Hz. A swing of 1.8 took George with Onyx from
- * 93..148 Hz (the tenth and ninetieth percentiles) to 80..171 and Isabella with Kore from
- * 157..242 to 135..299, the middle note kept, the voice measurably a little less clean.
+ * breathy delivery, which lifts a man only about 10 Hz. A swing of 1.8 around the middle note
+ * took George with Onyx from 93..148 Hz (the tenth and ninetieth percentiles) to 80..171 and
+ * Isabella with Kore from 157..242 to 135..299, the middle note kept, the voice measurably a little
+ * less clean.
  */
 const TONES: Record<Tone, ToneRecipe> = {
   plain: { toward: { man: [], woman: [] }, prosody: 0, swing: 1.8, speed: 1, db: 0 },
@@ -136,59 +146,118 @@ export function speakerOf(key: string): Speaker {
   }
 }
 
-/** The tone of one line: the doctor's temper two times in five, plain one in five, else any other. */
-export function toneFor(s: Speaker, random: () => number): Tone {
-  const r = random()
-  if (r < 0.4) return s.temper
-  if (r < 0.6) return 'plain'
-  const rest = TEMPERS.filter((t) => t !== s.temper)
-  return rest[Math.floor(random() * rest.length)]!
+/** How often the first phrase of a line is said in the doctor's temper instead of the tone it was written in. */
+const TEMPER = 0.4
+
+/**
+ * A line as this doctor says it: two times in five the first phrase in their temper, so tempers
+ * show, but never in the tone of the phrase after it, so the tone still changes.
+ */
+export function delivered(phrases: Phrase[], s: Speaker, random: () => number): Phrase[] {
+  return random() < TEMPER && phrases[1]?.tone !== s.temper ? [{ text: phrases[0]!.text, tone: s.temper }, ...phrases.slice(1)] : phrases
 }
 
-/** What the worker is asked: a line, the style's two halves as mixes of voices, the melody's swing, the pace as heard, the age and the level. */
+/** The tones that answer each tone, for a phrase after it. */
+const CONTRAST: Record<Tone, [Tone, Tone]> = {
+  plain: ['indignant', 'booming'],
+  booming: ['sniffy', 'hushed'],
+  indignant: ['hushed', 'gloating'],
+  gloating: ['booming', 'indignant'],
+  hushed: ['indignant', 'booming'],
+  sniffy: ['booming', 'gloating'],
+}
+
+/**
+ * A line written without tones (the game's own) as phrases: cut after , ; : ! ? into at most
+ * three, the first in any tone and each after it in a tone answering the one before.
+ */
+export function phrased(text: string, random: () => number): Phrase[] {
+  const parts = (text.match(/[^,;:!?]+[,;:!?]*/g) ?? []).map((t) => t.trim()).filter((t) => /\p{L}/u.test(t))
+  const cut = [...parts.slice(0, 2), ...(parts.length > 2 ? [parts.slice(2).join(' ')] : [])]
+  const out: Phrase[] = []
+  for (const t of cut) out.push({ text: t, tone: out.length ? CONTRAST[out.at(-1)!.tone][Math.floor(random() * 2)]! : TONE_NAMES[Math.floor(random() * TONE_NAMES.length)]! })
+  return out
+}
+
+/** Seconds of silence between two phrases, at least and at most. */
+const PAUSE = [0.15, 0.25] as const
+
+/**
+ * How the melody is widened in every phrase: each note moved away from the line's middle note
+ * tilted as the phrase tilts ('trend'), or from the middle note itself ('middle', as until
+ * 2026-11-11, kept to compare on the listening bench). Measured (2026-11-11) on 78 lines of two
+ * phrases Haiku wrote, in 3 men's and 3 women's voices, as Kokoro says them, around the middle and
+ * around the trend: notes from the tenth to the ninetieth percentile 8.6, 13.4 and 11.8 semitones
+ * apart; the fall through the first phrase -9.4, -12.4 and -9.3 st/s, through the second -4.2,
+ * -5.9 and -4.2; turns of 3 st up or down 0.73, 1.08 and 1.16 a second; the second phrase starting
+ * 5.5, 8.6 and 5.9 st above where the first ended. The trend widens the notes and turns them as
+ * often without deepening the fall (54 earlier lines agreed).
+ */
+export type Melody = 'trend' | 'middle'
+export const MELODY: Melody = 'trend'
+
+/** What the worker is asked: the timbre as a mix of voices, the age, the melody's way, and each phrase. */
 export interface Render {
   id: number
-  text: string
   timbre: Mix
+  age: Age
+  melody: Melody
+  phrases: PhraseRender[]
+}
+
+/** A phrase as the worker is asked to say it: the prosody as a mix of voices, the melody's swing, the pace as heard, the level and the pause before it. */
+export interface PhraseRender {
+  text: string
   prosody: Mix
   swing: number
   speed: number
-  age: Age
+  /** Loudness against a plain phrase, dB. */
   db: number
+  /** Seconds of silence before it (0 for the first). */
+  pause: number
 }
 
 export type Rendered = { id: number; mp3: Uint8Array; secs: number } | { id: number; error: string }
 
-export function recipe(text: string, s: Speaker, tone: Tone): Omit<Render, 'id'> {
-  const t = TONES[tone]
-  const toward = t.toward[s.sex]
-  const total = toward.reduce((a, [, x]) => a + x, 0)
-  const prosody: Mix = [...s.own.map(([v, w]): [KokoroVoice, number] => [v, w * (1 - t.prosody)]), ...toward.map(([v, w]): [KokoroVoice, number] => [v, (w / total) * t.prosody])]
-  return { text, timbre: s.own, prosody, swing: t.swing, speed: s.pace * t.speed, age: s.age, db: t.db }
+export function recipe(phrases: Phrase[], s: Speaker, random: () => number): Omit<Render, 'id'> {
+  return {
+    timbre: s.own,
+    age: s.age,
+    melody: MELODY,
+    phrases: phrases.map((p, i) => {
+      const t = TONES[p.tone]
+      const toward = t.toward[s.sex]
+      const total = toward.reduce((a, [, x]) => a + x, 0)
+      const prosody: Mix = [...s.own.map(([v, w]): [KokoroVoice, number] => [v, w * (1 - t.prosody)]), ...toward.map(([v, w]): [KokoroVoice, number] => [v, (w / total) * t.prosody])]
+      return { text: p.text, prosody, swing: t.swing, speed: s.pace * t.speed, db: t.db, pause: i ? PAUSE[0] + random() * (PAUSE[1] - PAUSE[0]) : 0 }
+    }),
+  }
 }
 
 /** A line as said. */
 export interface Speech {
   /** MP3, base64. */
   mp3: string
-  tone: Tone
+  /** Each phrase's tone, as said. */
+  tones: Tone[]
+  /** How long it is heard, from the first sound to the last. */
   secs: number
   /** How long it took to make. */
   ms: number
 }
 
 export interface Voice {
-  /** The line as the doctor with this key says it, in a tone picked for it. */
-  say(text: string, key: string): Promise<Speech>
+  /** The line as the doctor with this key says it, phrase by phrase. */
+  say(phrases: Phrase[], key: string): Promise<Speech>
   close(): void
 }
 
 /** Cores the worker may use: measured on a 6-core i7-8750H, 4 speak a 6 s line in 1.9 s and more are no faster. */
 const THREADS = 4
 
-class Kokoro implements Voice {
+export class Kokoro implements Voice {
   private readonly worker: Worker
-  private readonly waiting = new Map<number, { resolve: (s: Speech) => void; reject: (e: Error) => void; tone: Tone; t0: number }>()
+  private readonly waiting = new Map<number, { resolve: (r: { mp3: Uint8Array; secs: number; ms: number }) => void; reject: (e: Error) => void; t0: number }>()
   private seq = 0
   private broken: Error | null = null
 
@@ -201,7 +270,7 @@ class Kokoro implements Voice {
       if (!w) return
       this.waiting.delete(m.id)
       if ('error' in m) w.reject(new Error(m.error))
-      else w.resolve({ mp3: Buffer.from(m.mp3).toString('base64'), tone: w.tone, secs: m.secs, ms: Math.round(performance.now() - w.t0) })
+      else w.resolve({ mp3: m.mp3, secs: m.secs, ms: Math.round(performance.now() - w.t0) })
     })
     const stop = (err: Error) => {
       if (this.broken) return
@@ -214,15 +283,21 @@ class Kokoro implements Voice {
     this.worker.on('exit', (code) => stop(new Error(`the voice stopped (exit code ${code})`)))
   }
 
-  say(text: string, key: string): Promise<Speech> {
+  /** A recipe said as MP3, how long it is heard and how long it took to make (the listening bench asks for its own). */
+  render(r: Omit<Render, 'id'>): Promise<{ mp3: Uint8Array; secs: number; ms: number }> {
     if (this.broken) return Promise.reject(this.broken)
-    const speaker = speakerOf(key)
-    const tone = toneFor(speaker, Math.random)
     const id = ++this.seq
     return new Promise((resolve, reject) => {
-      this.waiting.set(id, { resolve, reject, tone, t0: performance.now() })
-      this.worker.postMessage({ id, ...recipe(text, speaker, tone) } satisfies Render)
+      this.waiting.set(id, { resolve, reject, t0: performance.now() })
+      this.worker.postMessage({ id, ...r } satisfies Render)
     })
+  }
+
+  async say(phrases: Phrase[], key: string): Promise<Speech> {
+    const speaker = speakerOf(key)
+    const said = delivered(phrases, speaker, Math.random)
+    const r = await this.render(recipe(said, speaker, Math.random))
+    return { mp3: Buffer.from(r.mp3).toString('base64'), tones: said.map((p) => p.tone), secs: r.secs, ms: r.ms }
   }
 
   close(): void {

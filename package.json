@@ -12,7 +12,8 @@
     "test": "vitest run",
     "sounds": "node scripts/sounds/build.ts",
     "postinstall": "node scripts/sounds/build.ts && node scripts/voice/fetch.ts",
-    "voice": "node scripts/voice/fetch.ts"
+    "voice": "node scripts/voice/fetch.ts",
+    "voice:bench": "node scripts/voice/bench.ts"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",

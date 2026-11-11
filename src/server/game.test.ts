@@ -1,126 +1,16 @@
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-
-import { COUNTDOWN, DESIGN_LIMIT, type ClientMsg, type Profile, type ServerMsg } from '../protocol'
+import { COUNTDOWN, DESIGN_LIMIT, REQUEST_COOLDOWN } from '../protocol'
 import { initPhysics } from '../sim/sim'
-import { STARTERS } from '../sim/things'
-import { Game, REJOIN, type Conn } from './game'
-import type { Answered, Designers, ModelName } from './opus'
-import type { ArenaAnswer, ThingAnswer, WearAnswer } from './prompts'
-import { Store } from './store'
-import type { Speech, Voice } from './voice'
+import { REJOIN } from './game'
+import { FakeDesigners, FakeVoice, flush, heardAs, setup } from './fakes'
+
+// Rounds are played for seconds, and each design is tried in the hall: slow beside the other test files.
+vi.setConfig({ testTimeout: 30_000 })
 
 beforeAll(async () => {
   await initPhysics()
 })
-
-const ARENA_CODE = `a.sky({ color: '#223344' })
-a.box([40, 1, 40], { at: [0, -0.5, 0], color: '#888888' })
-a.box([6, 2, 6], { at: [8, 1, 8], color: '#aa7744' })
-a.ramp([3, 2, 5], { at: [8, 1, 2.5], color: '#775533' })
-a.mover(() => a.box([3, 0.4, 3]), (t) => ({ at: [-8, 1 + Math.sin(t), -8] }))
-for (let i = 0; i < 8; i++) a.spawn([Math.sin(i * 0.785) * 16, 0, Math.cos(i * 0.785) * 16])`
-
-/** Designers that answer at once (or after `delay` ms) with designs that work. */
-class FakeDesigners implements Designers {
-  delay = 0
-  asked: { kind: string; message: string }[] = []
-  private n = 0
-  private wait<T>(data: T): Promise<Answered<T>> {
-    return new Promise((resolve) => setTimeout(() => resolve({ data, model: 'opus', ms: this.delay }), this.delay))
-  }
-  thing(message: string): Promise<Answered<ThingAnswer>> {
-    this.asked.push({ kind: 'thing', message })
-    const s = STARTERS[0]!
-    return this.wait({ name: `Made Thing ${++this.n}`, description: s.description, budget: 10, look: s.look, code: s.code })
-  }
-  wear(message: string): Promise<Answered<WearAnswer>> {
-    this.asked.push({ kind: 'wear', message })
-    return this.wait({ name: 'A tall hat', colors: { coat: '#ff0000' }, parts: [{ slot: 'head', name: 'Tall hat', code: 'm.cylinder(0.12, 0.12, 0.4, { at: [0, 0.3, 0], color: "black" })' }], remove: [] })
-  }
-  arena(_: unknown, message: string): Promise<Answered<ArenaAnswer>> {
-    this.asked.push({ kind: 'arena', message })
-    return this.wait({ name: `Test Hall ${++this.n}`, code: ARENA_CODE })
-  }
-  async lines(kind: 'taunt' | 'title'): Promise<string[]> {
-    return Array.from({ length: 12 }, () => `${kind} number ${++this.n}, most silly`)
-  }
-  next(): ModelName {
-    return 'opus'
-  }
-  close(): void {}
-}
-
-/** A voice that says a line at once as "<key>: <line>", holds them while `hold` is set until `release()`, or fails while `fail` is. */
-class FakeVoice implements Voice {
-  said: { text: string; key: string }[] = []
-  hold = false
-  fail = false
-  private held: (() => void)[] = []
-  say(text: string, key: string): Promise<Speech> {
-    this.said.push({ text, key })
-    if (this.fail) return Promise.reject(new Error('the voice is hoarse'))
-    const speech: Speech = { mp3: Buffer.from(`${key}: ${text}`).toString('base64'), tone: 'plain', secs: 2, ms: 1 }
-    if (!this.hold) return Promise.resolve(speech)
-    return new Promise((resolve) => this.held.push(() => resolve(speech)))
-  }
-  release(): void {
-    for (const r of this.held.splice(0)) r()
-  }
-  close(): void {}
-}
-
-const heardAs = (voice: string | null) => (voice === null ? null : Buffer.from(voice, 'base64').toString())
-
-class FakeConn implements Conn {
-  got: ServerMsg[] = []
-  closed = false
-  send(text: string) {
-    this.got.push(JSON.parse(text) as ServerMsg)
-  }
-  close() {
-    this.closed = true
-  }
-  last<T extends ServerMsg['type']>(type: T): Extract<ServerMsg, { type: T }> | undefined {
-    return this.got.filter((m) => m.type === type).at(-1) as Extract<ServerMsg, { type: T }> | undefined
-  }
-}
-
-const dirs: string[] = []
-afterEach(() => {
-  for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true })
-})
-
-function setup(designers: Designers | null = new FakeDesigners(), voice: Voice | null = new FakeVoice()) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dissertation-test-'))
-  dirs.push(dir)
-  let t = 0
-  const store = new Store(dir, () => {})
-  const logs: string[] = []
-  const game = new Game({ designers, voice, store, log: (m) => logs.push(m), join: [], random: Math.random, clock: () => t }, false)
-  const advance = (secs: number) => {
-    for (let i = 0; i < Math.round(secs * 60); i++) {
-      t += 1 / 60
-      game.tick()
-    }
-  }
-  const join = (name: string) => {
-    const conn = new FakeConn()
-    const h = game.connect(conn)
-    const send = (m: ClientMsg) => h.message(JSON.stringify(m))
-    const profile: Profile | null = name ? { name, title: 'On Ducks', look: { height: 1.8, build: 1, skin: '#e8b892', eyes: '#333333', coat: '#ffffff', shirt: '#334455', trousers: '#222222', shoes: '#111111', gait: 'steady', worn: {} } } : null
-    send({ type: 'hello', key: `key-${name || 'nameless'}-123456`, profile })
-    return { conn, send, close: h.close }
-  }
-  return { game, store, advance, join, dir, logs }
-}
-
-const flush = async () => {
-  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0))
-}
 
 describe('the game', () => {
   it('welcomes a player, and a nameless one cannot be ready', async () => {
@@ -161,7 +51,7 @@ describe('the game', () => {
     const sim = game.sim!
     const bob = [...sim.doctors.values()].find((d) => d.name === 'Bob')!
     for (let i = 0; i < 10; i++) {
-      sim.harm(bob, 10, { attacker: null, thing: null, what: 'test' })
+      sim.harm(bob, 10, { attacker: null, thing: null, fists: null, what: 'test' })
       advance(1.05)
     }
     expect(['roundEnd', 'dressing']).toContain(game.phase)
@@ -176,7 +66,7 @@ describe('the game', () => {
     const { join, advance, game, store } = setup(designers)
     const a = join('Alice')
     const b = join('Bob')
-    a.send({ type: 'settings', settings: { bots: 2, arena: 'academic' } })
+    a.send({ type: 'settings', settings: { bots: 2, arena: 'academic', wins: null } })
     advance(0.1)
     expect(a.conn.last('lobby')!.lobby.arena.state).toBe('building')
     expect(a.conn.last('lobby')!.lobby.players.filter((p) => p.bot).every((p) => p.ready)).toBe(true)
@@ -232,15 +122,15 @@ describe('the game', () => {
     const b = join('Bob')
     a.send({ type: 'ready', ready: true })
     b.send({ type: 'ready', ready: true })
-    advance(COUNTDOWN + 0.5)
+    advance(COUNTDOWN + REQUEST_COOLDOWN + 0.5)
     a.send({ type: 'request', text: 'a very long spoon' })
     await flush()
     advance(8)
     const snap = a.conn.last('snap')!
-    expect(snap.snap.crates).toHaveLength(1)
-    expect(snap.snap.crates[0]!.state).toBe('ready')
-    expect(store.things.size).toBe(1)
-    expect([...game.kinds.keys()]).toContain([...store.things.keys()][0])
+    // Beside the two brought to the doctors' defence, the one asked for.
+    expect(snap.snap.crates).toHaveLength(3)
+    expect(snap.snap.crates.find((c) => c.ask === 'a very long spoon')!.state).toBe('ready')
+    expect([...game.kinds.keys()]).toContain([...store.things.values()].find((t) => t.ask === 'a very long spoon')!.id)
     // A second request waits for the cooldown.
     a.send({ type: 'request', text: 'another' })
     advance(0.1)
@@ -255,15 +145,16 @@ describe('the game', () => {
     const b = join('Bob')
     a.send({ type: 'ready', ready: true })
     b.send({ type: 'ready', ready: true })
-    advance(COUNTDOWN + 0.5)
+    advance(COUNTDOWN + REQUEST_COOLDOWN + 0.5)
     designers.delay = 50
     a.send({ type: 'request', text: 'something slow' })
     advance(DESIGN_LIMIT + 0.5)
-    expect(a.conn.last('snap')!.snap.crates[0]!.state).toBe('ready')
-    expect(store.things.size).toBe(0)
+    expect(a.conn.last('snap')!.snap.crates.find((c) => c.ask === 'something slow')!.state).toBe('ready')
+    const slow = () => [...store.things.values()].filter((t) => t.ask === 'something slow').length
+    expect(slow()).toBe(0)
     await new Promise((r) => setTimeout(r, 80))
     await flush()
-    expect(store.things.size).toBe(1)
+    expect(slow()).toBe(1)
   })
 
   it('a curse travels with the next request', async () => {
@@ -274,9 +165,9 @@ describe('the game', () => {
     const b = join('Bob')
     a.send({ type: 'ready', ready: true })
     b.send({ type: 'ready', ready: true })
-    advance(COUNTDOWN + 0.5)
+    advance(COUNTDOWN + REQUEST_COOLDOWN + 0.5)
     const alice = [...game.sim!.doctors.values()].find((d) => d.name === 'Alice')!
-    game.sim!.curse(alice, 'Every noun becomes the word duck.', 1)
+    game.sim!.curse(alice, 'Every noun becomes the word duck.', 1, null)
     a.send({ type: 'request', text: 'a sword' })
     await flush()
     expect(designers.asked.filter((q) => q.kind === 'thing').at(-1)!.message).toMatch(/duck/)
@@ -302,8 +193,8 @@ describe('the game', () => {
     const said: string[] = []
     for (let i = 0; i < 6; i++) {
       a.send({ type: 'taunt' })
-      advance(4.1)
       await flush()
+      advance(4.1)
     }
     for (const m of a.conn.got) if (m.type === 'taunt') said.push(m.text)
     expect(said.length).toBeGreaterThanOrEqual(5)
@@ -369,7 +260,7 @@ describe('the game', () => {
     const { join, advance, game } = setup()
     await flush()
     const a = join('Alice')
-    a.send({ type: 'settings', settings: { bots: 3, arena: 'academic' } })
+    a.send({ type: 'settings', settings: { bots: 3, arena: 'academic', wins: null } })
     advance(0.1)
     expect(a.conn.last('lobby')!.lobby.players.filter((p) => p.bot)).toHaveLength(3)
     a.send({ type: 'ready', ready: true })
@@ -380,7 +271,7 @@ describe('the game', () => {
       await flush()
       // Alice stands about and loses a little now and then; the bots do the rest.
       const alice = game.sim ? [...game.sim.doctors.values()].find((d) => d.name === 'Alice') : undefined
-      if (alice?.alive && game.phase === 'round' && s % 8 === 0) game.sim!.harm(alice, 10, { attacker: null, thing: null, what: 'test' })
+      if (alice?.alive && game.phase === 'round' && s % 8 === 0) game.sim!.harm(alice, 10, { attacker: null, thing: null, fists: null, what: 'test' })
       if (game.phase === 'dressing' && was !== 'dressing') {
         rounds++
         a.send({ type: 'ready', ready: true })
@@ -390,17 +281,57 @@ describe('the game', () => {
     expect(rounds).toBe(2)
   }, 60_000)
 
+  it('a bot goes for a doctor in its second round as in its first', async () => {
+    let seed = 11
+    const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+    const { join, advance, game } = setup(null, null, random)
+    const a = join('Alice')
+    a.send({ type: 'settings', settings: { bots: 1, arena: 'academic', wins: null } })
+    advance(0.1)
+    const bot = a.conn.last('lobby')!.lobby.players.find((p) => p.bot)!.id
+    const alice = a.conn.last('welcome')!.you
+    /** Seconds into the live round until the bot first hurts Alice, standing where she was put (null: not within `secs`). */
+    const firstHit = (secs: number): number | null => {
+      a.conn.got.length = 0
+      a.send({ type: 'ready', ready: true })
+      advance(0.1)
+      advance(COUNTDOWN)
+      expect(game.phase).toBe('round')
+      for (let s = 0; s < secs * 10; s++) {
+        advance(0.1)
+        if (a.conn.got.some((m) => m.type === 'snap' && m.snap.events.some((e) => e.type === 'hit' && e.by === bot && e.victim === alice))) return s / 10
+      }
+      return null
+    }
+    expect(firstHit(30)).not.toBeNull()
+    // A long first round (Alice's credibility kept up): the chair ends it.
+    for (let s = 0; s < 90; s++) {
+      game.sim!.doctors.get(alice)!.cred = 100
+      advance(1)
+    }
+    expect(game.phase).toBe('round')
+    a.send({ type: 'endRound' })
+    advance(10)
+    expect(game.phase).toBe('dressing')
+    expect(firstHit(30)).not.toBeNull()
+  }, 60_000)
+
   it('without the models, the game plays its own hall and its own things', async () => {
     const { join, advance, game } = setup(null)
     const a = join('Alice')
     const b = join('Bob')
     a.send({ type: 'ready', ready: true })
     b.send({ type: 'ready', ready: true })
-    advance(COUNTDOWN + 0.5)
+    advance(COUNTDOWN + REQUEST_COOLDOWN + 0.5)
     expect(a.conn.last('arena')!.arena!.name).toBe('The Old Lecture Hall')
     a.send({ type: 'random' })
     advance(8)
-    expect(a.conn.last('snap')!.snap.crates[0]!.state).toBe('ready')
+    // The two at the doctors' spawns and the one asked for, all from the archive.
+    expect(a.conn.last('snap')!.snap.crates.map((c) => [c.state, c.archive])).toEqual([
+      ['ready', true],
+      ['ready', true],
+      ['ready', true],
+    ])
     void game
   })
 })

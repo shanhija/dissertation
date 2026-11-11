@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { BUDGET_WINDOW, HIT_CAP, HOLD_MAX, HOLD_REST, PER_SECOND_CAP, START_CRED } from '../protocol'
+import { BUDGET_WINDOW, CRATE_OWNER_ONLY, HIT_CAP, HOLD_MAX, PER_SECOND_CAP, START_CRED } from '../protocol'
 import { thingApi } from './api'
 import { buildArena, checkArena } from './arena'
 import { LECTURE_HALL } from './hall'
@@ -111,22 +111,22 @@ describe('the rules of harm', () => {
   it('caps a hit, a second and a thing', () => {
     const sim = hall()
     const [a, b] = pair(sim)
-    expect(sim.harm(b, 50, { attacker: 'a', thing: null, what: 'x' })).toBe(HIT_CAP)
-    expect(sim.harm(b, 50, { attacker: 'a', thing: null, what: 'x' })).toBe(PER_SECOND_CAP - HIT_CAP)
-    expect(sim.harm(b, 5, { attacker: 'a', thing: null, what: 'x' })).toBe(0)
+    expect(sim.harm(b, 50, { attacker: 'a', thing: null, fists: null, what: 'x' })).toBe(HIT_CAP)
+    expect(sim.harm(b, 50, { attacker: 'a', thing: null, fists: null, what: 'x' })).toBe(PER_SECOND_CAP - HIT_CAP)
+    expect(sim.harm(b, 5, { attacker: 'a', thing: null, fists: null, what: 'x' })).toBe(0)
     // Another attacker has a second of its own.
-    expect(sim.harm(b, 5, { attacker: null, thing: null, what: 'the arena' })).toBe(5)
+    expect(sim.harm(b, 5, { attacker: null, thing: null, fists: null, what: 'the arena' })).toBe(5)
     steps(sim, 70)
     const pen = sim.newThing(compileThing(STARTERS[0]!), a, a.pos)
-    expect(sim.harm(b, 9, { attacker: 'a', thing: pen, what: 'pen' })).toBe(9)
+    expect(sim.harm(b, 9, { attacker: 'a', thing: pen, fists: null, what: 'pen' })).toBe(9)
     steps(sim, 70)
     // The pen's budget is 10 from each player in any 20 s; then it takes again.
-    expect(sim.harm(b, 9, { attacker: 'a', thing: pen, what: 'pen' })).toBe(1)
+    expect(sim.harm(b, 9, { attacker: 'a', thing: pen, fists: null, what: 'pen' })).toBe(1)
     // 18 s after the first strike nothing yet; past 20 s the first strike's 9 is free again.
     steps(sim, (BUDGET_WINDOW - 3) * 60)
-    expect(sim.harm(b, 9, { attacker: 'a', thing: pen, what: 'pen' })).toBe(0)
+    expect(sim.harm(b, 9, { attacker: 'a', thing: pen, fists: null, what: 'pen' })).toBe(0)
     steps(sim, 3 * 60)
-    expect(sim.harm(b, 9, { attacker: 'a', thing: pen, what: 'pen' })).toBe(9)
+    expect(sim.harm(b, 9, { attacker: 'a', thing: pen, fists: null, what: 'pen' })).toBe(9)
   })
 
   it('a doctor at zero is out and drops what they held', () => {
@@ -134,7 +134,7 @@ describe('the rules of harm', () => {
     const [a, b] = pair(sim)
     sim.newThing(compileThing(STARTERS[0]!), b, b.pos)
     for (let i = 0; i < 12; i++) {
-      sim.harm(b, 10, { attacker: 'a', thing: null, what: 'x' })
+      sim.harm(b, 10, { attacker: 'a', thing: null, fists: null, what: 'x' })
       steps(sim, 61)
     }
     expect(b.alive).toBe(false)
@@ -292,13 +292,13 @@ return { use() { for (const d of w.others()) w.affect(d, { speed: 0, jump: 0, ha
     expect(Math.hypot(b.pos[0] - at[0], b.pos[2] - at[2])).toBeLessThan(0.05)
     expect(b.pos[1]).toBeCloseTo(at[1]!, 1)
     expect(a.cred).toBe(START_CRED)
-    // At HOLD_MAX the hold ends; a new one does not take for HOLD_REST.
+    // At HOLD_MAX the hold ends; a new one does not take for as long again.
     steps(sim, (HOLD_MAX - 1) * 60 + 5)
     expect(sim.snapshot().doctors.find((d) => d.id === 'b')!.fx).toBe(null)
     press(a, 'use')
     steps(sim, 30)
     expect(Math.hypot(b.pos[0] - at[0], b.pos[2] - at[2])).toBeGreaterThan(1)
-    steps(sim, HOLD_REST * 60)
+    steps(sim, HOLD_MAX * 60)
     press(a, 'use')
     steps(sim, 2)
     expect(sim.snapshot().doctors.find((d) => d.id === 'b')!.fx?.held).toBe(true)
@@ -501,7 +501,7 @@ describe('knocked flat', () => {
     const sim = hall()
     const [a, b] = pair(sim, 3)
     b.cred = 5
-    sim.harm(b, 10, { attacker: 'a', thing: null, what: 'x' })
+    sim.harm(b, 10, { attacker: 'a', thing: null, fists: null, what: 'x' })
     expect(b.alive).toBe(false)
     expect(b.rag).not.toBe(null)
     steps(sim, 60 * 5)
@@ -517,11 +517,11 @@ describe('crates', () => {
   it('come in near the asker, wait for the design and open for whoever is first', () => {
     const sim = hall()
     const [a, b] = pair(sim, 1)
-    const c = sim.dropCrate('a')!
+    const c = sim.dropCrate('a', null)!
     expect(c.state).toBe('arriving')
     // Coming in, it is only a sight: nobody can open it yet.
     steps(sim, 60)
-    sim.fillCrate(c.id, compileThing(STARTERS[0]!))
+    sim.fillCrate(c.id, compileThing(STARTERS[0]!), { archive: true })
     sim.teleport(b, [c.p[0] + 0.8, c.p[1] - 0.45, c.p[2]])
     steps(sim, 2)
     press(b, 'pick')
@@ -556,7 +556,7 @@ for (let i = 0; i < 8; i++) a.spawn([i - 4, 0, 10])`,
     steps(sim, 10)
     const xs: number[] = []
     for (let i = 0; i < 12; i++) {
-      const c = sim.dropCrate('a')!
+      const c = sim.dropCrate('a', null)!
       expect(c.p[1]).toBeCloseTo(0.47, 1)
       expect(c.p[0]).toBeGreaterThan(-3 + 0.44)
       expect(Math.hypot(c.p[0] - d.pos[0], c.p[2] - d.pos[2])).toBeGreaterThan(1.2)
@@ -569,19 +569,19 @@ for (let i = 0; i < 8; i++) a.spawn([i - 4, 0, 10])`,
     expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(1)
   })
 
-  it('wait for the design and open for whoever is first', () => {
+  it('wait for the design and open for whoever is first once the asker has had theirs', () => {
     const sim = hall()
     const [a, b] = pair(sim, 1)
-    const c = sim.dropCrate('a')!
+    const c = sim.dropCrate('a', null)!
     steps(sim, 60 * 8)
     expect(c.state).toBe('waiting')
     const dist = Math.hypot(c.p[0] - a.pos[0], c.p[2] - a.pos[2])
     expect(dist).toBeGreaterThan(1.5)
     expect(dist).toBeLessThan(6)
-    sim.fillCrate(c.id, compileThing(STARTERS[0]!))
+    sim.fillCrate(c.id, compileThing(STARTERS[0]!), { archive: true })
     expect(c.state).toBe('ready')
     sim.teleport(b, [c.p[0] + 0.8, c.p[1] - 0.45, c.p[2]])
-    steps(sim, 2)
+    steps(sim, CRATE_OWNER_ONLY * 60)
     press(b, 'pick')
     steps(sim, 2)
     expect(sim.crates.size).toBe(0)

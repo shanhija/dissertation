@@ -26,6 +26,7 @@ import {
   Group,
   LatheGeometry,
   LinearFilter,
+  LinearMipmapLinearFilter,
   Matrix4,
   Mesh,
   MeshBasicMaterial,
@@ -45,9 +46,10 @@ import {
 import { BODY, SLOT_FRAMES } from '../doctor'
 import { GAITS, SLOTS, type Gait, type Hand, type Look, type Quat, type Slot, type Vec3, type WardrobePart } from '../protocol'
 import { boxUV } from './materials'
-import { ModelInstance } from './models'
+import { ModelInstance, wornMaterial } from './models'
 import { Swing, type Fence } from './swing'
 import { PAINT_DOCTOR, harmonize, harmonizedHex, paint } from './paint'
+import { LABEL_LAYER } from './post'
 import { LABEL_FONT } from '../fonts'
 
 /** The joints on the standard doctor, metres: lengths run from joint to joint. */
@@ -254,11 +256,11 @@ function mat(color: string, cloth: boolean, double = false): MeshStandardMateria
   return m
 }
 
-/** A text label as a sprite. */
+/** A text label as a sprite, as wide in the world as asked (metres). */
 export class Label {
   readonly sprite: Sprite
   private readonly canvas = document.createElement('canvas')
-  private readonly texture: CanvasTexture
+  protected readonly texture: CanvasTexture
   private key = ''
 
   constructor(width: number, height: number, worldWidth: number) {
@@ -269,6 +271,9 @@ export class Label {
     this.sprite = new Sprite(new SpriteMaterial({ map: this.texture, depthTest: false, transparent: true }))
     this.sprite.scale.set(worldWidth, (worldWidth * height) / width, 1)
     this.sprite.renderOrder = 10
+    // Drawn over everything once the light is made the screen's colours (post.ts): the canvas's
+    // colours go onto the screen as they are, the texture read with no colour space of its own.
+    this.sprite.layers.set(LABEL_LAYER)
   }
 
   draw(key: string, paint: (g: CanvasRenderingContext2D, w: number, h: number) => void): void {
@@ -284,6 +289,66 @@ export class Label {
     this.texture.dispose()
     ;(this.sprite.material as SpriteMaterial).dispose()
   }
+}
+
+const screenSize = new Vector2()
+const parentScale = new Vector3()
+
+/**
+ * A label drawn at a steady size on the screen whatever its distance, as the page's own text is
+ * (2026-11-11: a name tag sized in metres could not be read past about 8 m), and in the same
+ * pixels: width and height are its size there. The canvas is drawn at twice that, for sharp
+ * screens, and stays sharp smaller through its mipmaps. Drawn over everything: whoever shows it
+ * decides when it can be seen (a name tag while its doctor can be: World.nameTags).
+ */
+export class ScreenLabel extends Label {
+  constructor(width: number, height: number) {
+    super(width * 2, height * 2, 1)
+    this.texture.minFilter = LinearMipmapLinearFilter
+    const m = this.sprite.material as SpriteMaterial
+    m.sizeAttenuation = false
+    m.depthWrite = false
+    m.fog = false
+    this.sprite.onBeforeRender = (renderer, _scene, camera) => {
+      // Metres per pixel one metre away (a sprite of fixed size is scaled by its distance), under whatever scales its parent.
+      const perPixel = 2 / (camera.projectionMatrix.elements[5]! * renderer.getSize(screenSize).y)
+      this.sprite.parent!.getWorldScale(parentScale)
+      this.sprite.scale.set((width * perPixel) / parentScale.x, (height * perPixel) / parentScale.y, 1)
+      this.sprite.updateMatrixWorld()
+    }
+  }
+}
+
+/** A name tag's height on the screen, in the page's pixels: it stands this tall above its foot, over the head. */
+export const TAG_HEIGHT = 40
+/** A taunt's bubble on the screen, in the page's pixels: it stands over the name tag, at most four lines. */
+const BUBBLE = [300, 120] as const
+
+/** Within this many metres a doctor's name tag is drawn in full. */
+export const TAG_NEAR = 12
+/** The doctor nearest the crosshair, within this angle (radians), has their tag in full however far. */
+export const TAG_AIM = (6 * Math.PI) / 180
+
+/**
+ * Whose name tags are drawn in full, seen from an eye looking along `forward`: every doctor near
+ * (marks: where each is), and the one nearest the crosshair. The rest show a pip in their colour,
+ * so a line of doctors is not a wall of names, and who is who still reads at any distance.
+ */
+export function fullTags(eye: Vector3, forward: Vector3, marks: ReadonlyMap<string, Vector3>): Set<string> {
+  const full = new Set<string>()
+  let aimed: string | null = null
+  let best = TAG_AIM
+  for (const [id, p] of marks) {
+    const to = p.clone().sub(eye)
+    if (to.length() <= TAG_NEAR) full.add(id)
+    const angle = to.angleTo(forward)
+    if (angle < best) {
+      best = angle
+      aimed = id
+    }
+  }
+  if (aimed) full.add(aimed)
+  return full
 }
 
 /** Wraps text into lines that fit a width. */
@@ -438,8 +503,13 @@ export class DoctorMesh {
   private readonly feetAt: Group[] = []
   private lookKey = ''
   private height: number = BODY.height
-  readonly tag = new Label(512, 72, 1.8)
-  readonly bubble = new Label(512, 200, 2.2)
+  /** The name tag, standing over the doctor's head (shown while the doctor can be seen), TAG_HEIGHT page pixels tall above its foot. */
+  readonly tag = new ScreenLabel(240, TAG_HEIGHT)
+  /**
+   * A taunt as said, in a bubble over the name tag, as the tag the same size on the screen near or
+   * far (sized in metres, it was unreadable past a few metres, and the tag stood up into it).
+   */
+  readonly bubble = new ScreenLabel(BUBBLE[0], BUBBLE[1])
   bubbleUntil = 0
   /** When it last lay as a ragdoll, and the joints as they lay, to get up from. */
   private ragAt = -10
@@ -679,6 +749,9 @@ export class DoctorMesh {
       if (o instanceof Mesh) o.castShadow = true
     })
     this.root.add(this.tag.sprite, this.bubble.sprite)
+    this.tag.sprite.center.set(0.5, 0)
+    // From the tag's foot, up past the tag.
+    this.bubble.sprite.center.set(0.5, -(TAG_HEIGHT + 4) / BUBBLE[1])
     this.bubble.sprite.visible = false
   }
 
@@ -712,7 +785,7 @@ export class DoctorMesh {
         this.worn.set(
           s,
           this.wornGroups[s].map((g) => {
-            const inst = new ModelInstance(part.recipe)
+            const inst = new ModelInstance(part.recipe, wornMaterial())
             g.add(inst.root)
             return { inst, swing: new Swing(part.recipe, inst.parts, inst.root, FENCES[s]) }
           }),
@@ -720,36 +793,65 @@ export class DoctorMesh {
       }
     }
     for (const m of this.shoes) m.visible = !this.worn.has('feet')
-    this.tag.sprite.position.y = this.height + 0.38
-    this.bubble.sprite.position.y = this.height + 1.05
+    // Over the top of whatever the head wears (a tall hat stood through the tag).
+    const crown = Math.max(0, ...(['hair', 'head'] as const).map((s) => (this.worn.get(s)?.[0]!.inst.recipe.bounds.max[1] ?? 0) - BODY.head.radius))
+    const top = this.height + crown * h
+    this.tag.sprite.position.y = top + 0.3
+    this.bubble.sprite.position.y = top + 0.3
   }
 
-  /** The name tag: name, and a bar of credibility under it. */
-  label(name: string, color: string, cred: number | null): void {
-    const c = cred === null ? -1 : Math.round(cred)
-    this.tag.draw(`${name}|${color}|${c}`, (g, w) => {
-      g.font = `600 30px ${LABEL_FONT}`
+  /**
+   * The name tag: the name in the player's colour and a bar of credibility under it; or, for a
+   * doctor neither near nor looked at, a pip in their colour, so a room of doctors is not a
+   * wall of names.
+   */
+  label(name: string, color: string, cred: number, full: boolean): void {
+    const c = Math.round(cred)
+    this.tag.draw(full ? `${name}|${color}|${c}` : `pip|${color}`, (g, w, h) => {
+      const ink = 'rgba(20,14,10,0.9)'
+      if (!full) {
+        g.beginPath()
+        g.arc(w / 2, h - 13, 9, 0, TAU)
+        g.fillStyle = color
+        g.fill()
+        g.lineWidth = 4
+        g.strokeStyle = ink
+        g.stroke()
+        return
+      }
+      g.font = `600 34px ${LABEL_FONT}`
       g.textAlign = 'center'
-      g.lineWidth = 6
-      g.strokeStyle = 'rgba(20,14,10,0.85)'
-      g.strokeText(name, w / 2, 30)
+      // An outline thick enough to hold the name off a bright window or a lamp's bloom.
+      g.lineWidth = 10
+      g.lineJoin = 'round'
+      g.strokeStyle = ink
+      g.strokeText(name, w / 2, 38)
       g.fillStyle = color
-      g.fillText(name, w / 2, 30)
-      if (c < 0) return
-      g.fillStyle = 'rgba(20,14,10,0.8)'
-      g.fillRect(w / 2 - 80, 44, 160, 16)
+      g.fillText(name, w / 2, 38)
+      g.fillStyle = ink
+      g.fillRect(w / 2 - 82, 52, 164, 18)
       g.fillStyle = c > 50 ? '#e8d9a8' : c > 25 ? '#e0a040' : '#e05040'
-      g.fillRect(w / 2 - 77, 47, (154 * c) / 100, 10)
+      g.fillRect(w / 2 - 79, 55, (158 * c) / 100, 12)
     })
+  }
+
+  /** Where the name tag (and a taunt's bubble over it) stands, its foot over the head, in the world. */
+  tagFoot(): Vec3 {
+    return this.tag.sprite.getWorldPosition(new Vector3()).toArray()
+  }
+
+  /** Page pixels over the tag's foot that the tag and, while one is up, a taunt's bubble take: words floating over the doctor start above them. */
+  overhead(): number {
+    return TAG_HEIGHT + 4 + (this.bubble.sprite.visible ? BUBBLE[1] : 0)
   }
 
   say(text: string, until: number): void {
     this.bubbleUntil = until
     this.bubble.sprite.visible = true
     this.bubble.draw(text, (g, w, h) => {
-      g.font = `italic 500 30px ${LABEL_FONT}`
+      g.font = `italic 500 34px ${LABEL_FONT}`
       const lines = wrap(g, `“${text}”`, w - 40).slice(0, 4)
-      const bh = lines.length * 36 + 24
+      const bh = lines.length * 40 + 24
       g.fillStyle = 'rgba(250,244,226,0.95)'
       g.strokeStyle = '#3a2a1e'
       g.lineWidth = 3
@@ -759,7 +861,7 @@ export class DoctorMesh {
       g.stroke()
       g.fillStyle = '#2a1e14'
       g.textAlign = 'center'
-      lines.forEach((l, i) => g.fillText(l, w / 2, h - bh + 26 + i * 36))
+      lines.forEach((l, i) => g.fillText(l, w / 2, h - bh + 40 + i * 40))
     })
   }
 

@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { HOLD_MAX, HOLD_REST, START_CRED, type GameEvent } from '../protocol'
+import { HOLD_MAX, START_CRED, type GameEvent } from '../protocol'
 import { initPhysics, len, sub, type Sim } from './sim'
 import { hall, pair, press, steps } from './testkit'
 import { STARTERS, compileThing, type ThingDesign } from './things'
@@ -136,7 +136,7 @@ describe('fields', () => {
     expect(sim.held(b)).toBe(false)
     const at = [...b.pos]
     b.input = { ...b.input, yaw: Math.PI, move: [0, 1] }
-    steps(sim, Math.floor(HOLD_REST * 60) - 10)
+    steps(sim, HOLD_MAX * 60 - 10)
     expect(b.pos[2]).toBeLessThan(at[2]! - 3)
   })
 

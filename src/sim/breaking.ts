@@ -313,7 +313,7 @@ function lump(sim: Sim, at: Vec3, q: Q, shape: 'box' | 'ball' | 'cylinder', size
     id: sim.nextId('b'),
     rb,
     collider,
-    source: { attacker: null, thing: null, what: 'the arena' },
+    source: { attacker: null, thing: null, fists: null, what: 'the arena' },
     owner: RUBBLE,
     model: look.model,
     prim: look.prim,

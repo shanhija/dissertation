@@ -10,7 +10,7 @@ import type { Recipe } from '../protocol'
 
 /** Every triangle of the model at rest, in its own frame, scaled: x, y, z per corner, three corners a triangle. */
 export function recipeTriangles(recipe: Recipe, scale: number): Float32Array {
-  const model = buildModel(recipe)
+  const model = buildModel(recipe, 'collider')
   const out: number[] = []
   try {
     for (const [part, g] of model.parts) {

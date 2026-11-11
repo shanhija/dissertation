@@ -10,6 +10,8 @@
 import { PLAYER_COLORS, STARTER_WEAR, botName, cleanLook, randomLook } from '../doctor'
 import {
   DESIGN_LIMIT,
+  FIX_GRACE,
+  MATCH_WINS,
   MAX_PLAYERS,
   NO_INPUT,
   COUNTDOWN,
@@ -18,12 +20,12 @@ import {
   READY_WAIT,
   REQUEST_COOLDOWN,
   SLOTS,
-  WINS_TO_MATCH,
   type ArenaStatus,
   type ClientMsg,
   type Input,
   type Lobby,
   type Look,
+  type MatchWins,
   type Me,
   type Phase,
   type PlayerInfo,
@@ -38,12 +40,12 @@ import { buildArena, checkArena, type ArenaSource } from '../sim/arena'
 import { LECTURE_HALL } from '../sim/hall'
 import { Bot } from '../sim/bots'
 import { compile } from '../sim/sandbox'
-import { DT, Sim, type ThingKind } from '../sim/sim'
+import { DT, Sim, type Made, type ThingKind } from '../sim/sim'
 import { STARTERS, compileThing, trialThing, type ThingDesign } from '../sim/things'
-import type { Designers } from './opus'
+import { TO_SONNET, type Designers } from './opus'
 import { arenaMessage, linesMessage, thingMessage, wearMessage, type ThingAnswer, type WearAnswer } from './prompts'
-import { Store, lineKey, type ArenaDesign } from './store'
-import type { Speech, Voice } from './voice'
+import { Store, lineKey, lineText, type ArenaDesign, type LineStock } from './store'
+import { phrased, type Phrase, type Speech, type Voice } from './voice'
 
 /** A socket as the game uses it. */
 export interface Conn {
@@ -81,12 +83,21 @@ interface Player {
   input: Input
   cooldownUntil: number
   note: { text: string; until: number } | null
-  tauntAt: number
+  /** When their last taunt has been said (the game's clock): V waits for it and TAUNT_GAP more. */
+  speakingUntil: number
   /** Their next taunt, taken and being said in their voice ahead of V (null: none taken yet). */
   nextTaunt: Promise<Taunt | null> | null
   /** V was pressed and the taunt is still being said. */
   tauntWaiting: boolean
   botCrateAt: number
+  /** What they will bring to their defence, as last written (empty: something nobody has had). */
+  bringWords: string
+  /** What they bring to their defence this break, once they were Ready. */
+  bring: Bring | null
+  /** The crate brought to their defence this round: it counts against no request. */
+  defence: string | null
+  /** The round they last wrote a review in. */
+  reviewed: number
 }
 
 interface Taunt {
@@ -103,11 +114,32 @@ interface CrateJob {
   player: string
 }
 
+/**
+ * A thing brought to one's defence: asked for in the break once the player is Ready, designed at
+ * most BRING_AT_ONCE at a time there and bound by no crate's time, and waiting in a crate beside
+ * them when the round begins.
+ */
+interface Bring {
+  player: Player
+  /** Waiting its turn for a designer, being made, made, or failed (its crate gets a thing from the archive). */
+  state: Exclude<PlayerInfo['bringing'], 'none'>
+  /** The words it is made from (null: something nobody has had), as they are when its design starts. */
+  ask: string | null
+  genie: boolean
+  /** Its design, once started. */
+  design: Promise<ThingKind> | null
+  /** Its crate's job, once the round has begun. */
+  job: CrateJob | null
+}
+
 /** Seconds a player who dropped out (a page reloaded, the network blinked) keeps their doctor in the round, to come back to. */
 export const REJOIN = 20
 const ROUND_END = 4.5
 const MATCH_END = 9
-const TAUNT_EVERY = 4
+/** Seconds after one's own taunt has been said before the next may start, so a doctor never talks over themselves. */
+const TAUNT_GAP = 0.8
+/** Seconds a taunt only read lasts, a word (said, the lines take about 0.5 s a word: measured 2026-11-11). */
+const READ_WORD = 0.5
 const WEAR_TIMEOUT = 70_000
 const THING_TIMEOUT = 100_000
 /**
@@ -116,6 +148,17 @@ const THING_TIMEOUT = 100_000
  * twisted nearly every clear request.
  */
 const GENIE = 0.25
+/**
+ * The share of random-button requests the designer is told to make take no credibility by itself,
+ * changing the fight some other way (left alone, it made only weapons: all 76 things kept by
+ * 2026-11-10 hurt).
+ */
+const ASIDE = 1 / 3
+/**
+ * Things brought to a defence designed at once in a break: half of what Opus takes at once before
+ * the picker turns to a smaller model, the rest left to outfits being made meanwhile.
+ */
+const BRING_AT_ONCE = TO_SONNET / 2
 const ARENA_TIMEOUT = 480_000
 /** Seconds an arena is expected to take while fewer than five are kept to measure by. */
 const ARENA_EXPECT = 180
@@ -142,7 +185,7 @@ export class Game {
   private phaseUntil = 0
   round = 0
   sim: Sim | null = null
-  settings: Settings = { bots: 0, arena: 'academic' }
+  settings: Settings = { bots: 0, arena: 'academic', wins: null }
   readonly kinds = new Map<string, ThingKind>()
   readonly wardrobe = new Map<string, WardrobePart>()
   private nextArena: ArenaSource | null = null
@@ -151,7 +194,11 @@ export class Game {
   private waitSince: number | null = null
   private winner: string | null = null
   private startedWith = 0
+  /** The rounds to win this match by the room, fixed at its first round (null: no match under way). */
+  private roomWins: MatchWins | null = null
   private jobs: CrateJob[] = []
+  /** This break's things brought to a defence, in the order their players were Ready. */
+  private brings: Bring[] = []
   private lobbyDirty = true
   /** The lobby's timer as last sent, to send it again whenever it counts down. */
   private sentTimer: number | null = null
@@ -160,6 +207,8 @@ export class Game {
   private last: number
   private readonly timer: ReturnType<typeof setInterval> | null
   private refilling = { taunt: false, title: false }
+  /** OWN_TAUNTS as phrases, each with a tone. */
+  private readonly ownTaunts: Phrase[][]
   private closed = false
 
   constructor(
@@ -176,6 +225,7 @@ export class Game {
         deps.log(`thing ${d.id} would not compile: ${(err as Error).message}`)
       }
     }
+    this.ownTaunts = OWN_TAUNTS.map((t) => phrased(t, deps.random))
     this.last = deps.clock()
     this.buildNextArena()
     this.refill('taunt')
@@ -302,10 +352,14 @@ export class Game {
       input: NO_INPUT,
       cooldownUntil: 0,
       note: null,
-      tauntAt: -10,
+      speakingUntil: -10,
       nextTaunt: null,
       tauntWaiting: false,
       botCrateAt: 0,
+      bringWords: '',
+      bring: null,
+      defence: null,
+      reviewed: 0,
     }
     this.players.set(id, p)
     return p
@@ -335,6 +389,11 @@ export class Game {
       case 'ready':
         p.ready = msg.ready === true && p.name !== ''
         if (msg.ready === true && p.name === '') this.note(p, 'Give your doctor a name first.')
+        // Ready, what they bring takes its turn to be made: once a break (Ready again after a reload, its turn may have come).
+        if (p.ready && this.phase === 'dressing' && this.deps.designers) {
+          this.bringOf(p)
+          this.startBrings()
+        }
         this.lobbyDirty = true
         return
       case 'input':
@@ -351,6 +410,13 @@ export class Game {
       case 'random':
         this.request(p, null)
         return
+      case 'bring':
+        // Written in the dressing room for the round to come (a page's last word may land after it began).
+        if (this.phase === 'dressing' && typeof msg.text === 'string') p.bringWords = msg.text.trim().slice(0, 400)
+        return
+      case 'review':
+        if (typeof msg.target === 'string' && typeof msg.text === 'string' && msg.text.trim()) this.review(p, msg.target, msg.text.trim().slice(0, 200))
+        return
       case 'taunt':
         this.taunt(p)
         return
@@ -359,6 +425,7 @@ export class Game {
         this.settings = {
           bots: Math.max(0, Math.min(MAX_PLAYERS - 1, Math.round(Number(msg.settings.bots) || 0))),
           arena: msg.settings.arena === 'anything' ? 'anything' : 'academic',
+          wins: MATCH_WINS.find((w) => w === msg.settings.wins) ?? null,
         }
         this.lobbyDirty = true
         return
@@ -385,7 +452,7 @@ export class Game {
   }
 
   private giveTitle(p: Player): void {
-    const title = this.takeLine('title')
+    const title = this.takeLine('title', this.deps.store.lines.titles, [])
     if (title) {
       p.title = title
       this.send(p, { type: 'profile', profile: { name: p.name, title: p.title, look: p.look } })
@@ -395,15 +462,15 @@ export class Game {
 
   // ---------------------------------------------------------------------------- lines
 
-  /** A line never handed out before, or null when none is ready. */
-  private takeLine(kind: 'taunt' | 'title'): string | null {
-    const stock = kind === 'taunt' ? this.deps.store.lines.taunts : this.deps.store.lines.titles
+  /** A line never handed out before (from the stock, else from `own`), or null when none is ready. */
+  private takeLine<T extends string | Phrase[]>(kind: 'taunt' | 'title', stock: LineStock<T>, own: T[]): T | null {
     const used = new Set(stock.used.map(lineKey))
+    const fresh = (l: T) => !used.has(lineKey(lineText(l)))
     let line = stock.ready.shift() ?? null
-    while (line !== null && used.has(lineKey(line))) line = stock.ready.shift() ?? null
-    if (line === null && kind === 'taunt') line = OWN_TAUNTS.find((t) => !used.has(lineKey(t))) ?? null
+    while (line !== null && !fresh(line)) line = stock.ready.shift() ?? null
+    line ??= own.find(fresh) ?? null
     if (line !== null) {
-      stock.used.push(line)
+      stock.used.push(lineText(line))
       this.deps.store.saveLines()
     }
     this.refill(kind)
@@ -412,17 +479,25 @@ export class Game {
 
   private refill(kind: 'taunt' | 'title'): void {
     const designers = this.deps.designers
-    const stock = kind === 'taunt' ? this.deps.store.lines.taunts : this.deps.store.lines.titles
-    if (!designers || this.refilling[kind] || stock.ready.length >= 6 || this.closed) return
+    if (!designers) return
+    const clean = (t: string) => t.trim().replace(/^["'\d.\-\s]+|["']+$/g, '').slice(0, 200)
+    const lines = this.deps.store.lines
+    if (kind === 'taunt') this.restock(kind, lines.taunts, (m) => designers.taunts(m).then((ls) => ls.map((l) => l.map((p) => ({ text: clean(p.text), tone: p.tone })).filter((p) => p.text))))
+    else this.restock(kind, lines.titles, (m) => designers.titles(m).then((ls) => ls.map(clean)))
+  }
+
+  /** Twelve more lines asked for while fewer than six are ready, each unlike any written. */
+  private restock<T extends string | Phrase[]>(kind: 'taunt' | 'title', stock: LineStock<T>, write: (message: string) => Promise<T[]>): void {
+    if (this.refilling[kind] || stock.ready.length >= 6 || this.closed) return
     this.refilling[kind] = true
-    designers
-      .lines(kind, linesMessage(12, [...stock.used, ...stock.ready]))
+    const avoid = [...stock.used, ...stock.ready.map(lineText)]
+    write(linesMessage(12, avoid))
       .then((lines) => {
-        const seen = new Set([...stock.used, ...stock.ready].map(lineKey))
-        for (const l of lines) {
-          const line = l.trim().replace(/^["'\d.\-\s]+|["']+$/g, '').slice(0, 200)
-          if (line.length < 6 || seen.has(lineKey(line))) continue
-          seen.add(lineKey(line))
+        const seen = new Set(avoid.map(lineKey))
+        for (const line of lines) {
+          const text = lineText(line)
+          if (text.length < 6 || seen.has(lineKey(text))) continue
+          seen.add(lineKey(text))
           stock.ready.push(line)
         }
         this.deps.store.saveLines()
@@ -435,14 +510,15 @@ export class Game {
   }
 
   /**
-   * A player's next taunt: a line taken now and said in their voice ahead of time (about 2 s), so
-   * V is heard at once. Null when no line is ready.
+   * A player's next taunt: a line taken now and said in their voice ahead of time (about a second),
+   * so V is heard at once. Null when no line is ready.
    */
   private prepareTaunt(p: Player): Promise<Taunt | null> {
-    const text = this.takeLine('taunt')
-    if (!text) return Promise.resolve(null)
+    const line = this.takeLine('taunt', this.deps.store.lines.taunts, this.ownTaunts)
+    if (!line) return Promise.resolve(null)
+    const text = lineText(line)
     if (!this.deps.voice) return Promise.resolve({ text, speech: null })
-    return this.deps.voice.say(text, p.key).then(
+    return this.deps.voice.say(line, p.key).then(
       (speech) => ({ text, speech }),
       (err: Error) => {
         if (!this.closed) this.deps.log(`voice: "${text}" was not said: ${err.message}`)
@@ -452,23 +528,19 @@ export class Game {
   }
 
   private taunt(p: Player): void {
-    const now = this.now()
-    if (now - p.tauntAt < TAUNT_EVERY || !p.name || p.tauntWaiting) return
+    if (this.now() < p.speakingUntil + TAUNT_GAP || !p.name || p.tauntWaiting) return
     const next = p.nextTaunt ?? this.prepareTaunt(p)
     p.nextTaunt = null
     p.tauntWaiting = true
-    p.tauntAt = now
     void next.then((t) => {
       p.tauntWaiting = false
       if (this.closed) return
-      if (!t) {
-        p.tauntAt = -10
-        return this.note(p, 'No taunt is ready yet.')
-      }
+      if (!t) return this.note(p, 'No taunt is ready yet.')
       const d = this.sim?.doctors.get(p.id)
       const at = d && this.phase !== 'dressing' ? this.sim!.eyeOf(d) : null
       this.broadcast({ type: 'taunt', by: p.id, text: t.text, at, voice: t.speech?.mp3 ?? null })
-      this.deps.store.append({ kind: 'taunt', by: p.name, text: t.text, ...(t.speech && { tone: t.speech.tone, secs: Math.round(t.speech.secs * 10) / 10, ms: t.speech.ms }) })
+      this.deps.store.append({ kind: 'taunt', by: p.name, text: t.text, ...(t.speech && { tones: t.speech.tones, secs: Math.round(t.speech.secs * 10) / 10, ms: t.speech.ms }) })
+      p.speakingUntil = this.now() + (t.speech ? t.speech.secs : t.text.split(/\s+/).length * READ_WORD)
       p.nextTaunt = this.prepareTaunt(p)
     })
   }
@@ -543,41 +615,71 @@ export class Game {
   private request(p: Player, ask: string | null): void {
     const sim = this.sim
     const now = this.now()
-    if (!sim || this.phase !== 'round') return this.note(p, 'Crates come only during a round.')
+    // In the countdown too: the doctor cannot move then anyway.
+    if (!sim || (this.phase !== 'round' && this.phase !== 'countdown')) return this.note(p, 'Crates come only during a round.')
     const d = sim.doctors.get(p.id)
     if (!d?.alive) return this.note(p, 'You are out of this round.')
     d.writing = false
     if (now < p.cooldownUntil) return this.note(p, `Wait ${Math.ceil(p.cooldownUntil - now)} s.`)
-    if (sim.me(p.id).crate) return this.note(p, 'Your crate is still coming.')
-    const crate = sim.dropCrate(p.id)
+    if (this.crateComing(sim, p)) return this.note(p, 'Your crate is still coming.')
+    const genie = ask !== null && this.deps.random() < GENIE
+    const aside = ask === null && this.deps.random() < ASIDE
+    const crate = sim.dropCrate(p.id, ask)
     if (!crate) return
     p.cooldownUntil = now + REQUEST_COOLDOWN
     const curse = sim.takeCurse(p.id)
     const job: CrateJob = { crate: crate.id, sim, deadline: now + DESIGN_LIMIT, filled: false, player: p.id }
     this.jobs.push(job)
     if (!this.deps.designers) {
-      this.fill(job, this.fallbackKind(), 'Opus is not here: a thing from the archive.')
+      this.fill(job, this.fallbackKind(), { archive: true }, 'Opus is not here: a thing from the archive.')
       return
     }
     this.note(p, `${capital(this.deps.designers.next())} is designing it.`)
-    this.designThing(ask, p.name, curse).then(
+    const design = this.designThing({ ask, by: p.name, curse, genie, aside }, () => job.deadline, () => this.sentBack(job))
+    design.catch((err: Error) => this.deps.log(`design for ${p.name}: ${err.message}`))
+    this.follow(job, design, { archive: false, genie, curse })
+  }
+
+  /** A crate the player asked for in this round is still coming or unopened (the one brought to their defence counts for nothing). */
+  private crateComing(sim: Sim, p: Player): boolean {
+    return [...sim.crates.values()].some((c) => c.owner === p.id && c.id !== p.defence)
+  }
+
+  /**
+   * A crate waits for its design: filled with it when it comes, or, when it comes after the
+   * archive's thing filled the crate, in its place while nobody has opened it; from the archive
+   * when the design fails.
+   */
+  private follow(job: CrateJob, design: Promise<ThingKind>, made: Made): void {
+    design.then(
       (kind) => {
-        if (!job.filled) this.fill(job, kind, `Ready: ${kind.name}.`)
-        else this.note(p, `${kind.name} came too late for that crate; it is in the archive now.`)
+        if (!job.filled) return this.fill(job, kind, made, `Ready: ${kind.name}.`)
+        const p = this.players.get(job.player)
+        if (job.sim === this.sim && job.sim.crates.has(job.crate)) {
+          job.sim.fillCrate(job.crate, kind, made)
+          if (p) this.note(p, `It made it after all: ${kind.name}.`)
+        } else if (p) this.note(p, `${kind.name} came too late for that crate; it is in the archive now.`)
       },
-      (err: Error) => {
-        this.deps.log(`design for ${p.name}: ${err.message}`)
-        if (!job.filled) this.fill(job, this.fallbackKind(), 'The design failed: a thing from the archive.')
+      () => {
+        if (!job.filled) this.fill(job, this.fallbackKind(), { archive: true }, 'The design failed: a thing from the archive.')
       },
     )
   }
 
-  private fill(job: CrateJob, kind: ThingKind, note: string): void {
+  private fill(job: CrateJob, kind: ThingKind, made: Made, note: string): void {
     job.filled = true
     if (job.sim !== this.sim) return
-    job.sim.fillCrate(job.crate, kind)
+    job.sim.fillCrate(job.crate, kind, made)
     const p = this.players.get(job.player)
     if (p) this.note(p, note)
+  }
+
+  /** A crate's design failed its trial and went back to be fixed: the crate waits FIX_GRACE longer for it, and its asker is told. */
+  private sentBack(job: CrateJob): void {
+    if (job.filled || job.sim !== this.sim) return
+    job.deadline += FIX_GRACE
+    const p = this.players.get(job.player)
+    if (p) this.note(p, `It failed its trial and went back to be fixed: ${FIX_GRACE} s more.`)
   }
 
   private fallbackKind(): ThingKind {
@@ -585,14 +687,22 @@ export class Game {
     return all[Math.floor(this.deps.random() * all.length)]!
   }
 
-  private async designThing(ask: string | null, by: string, curse: string | null): Promise<ThingKind> {
+  /**
+   * A thing designed from a request (tried, kept in the library), or the reason none passed.
+   * deadline: when its crate falls back to the archive, as it is when each try is asked (null: no
+   * crate waits for it yet), for the picker to judge the model by; onFix is called when a first
+   * try goes back to be fixed (before the second is asked).
+   */
+  private async designThing(req: { ask: string | null; by: string; curse: string | null; genie: boolean; aside: boolean }, deadline: () => number | null, onFix: () => void): Promise<ThingKind> {
     const designers = this.deps.designers!
+    const { ask, by, curse, genie, aside } = req
     const avoid = ask === null ? [...this.kinds.values()].map((k) => k.name) : []
-    const genie = ask !== null && this.deps.random() < GENIE
     const t0 = this.now()
     let fix: { answer: ThingAnswer; problems: string[] } | null = null
     for (let attempt = 0; attempt < 2; attempt++) {
-      const a = await designers.thing(thingMessage({ ask, by, curse, avoid, genie, fix }), THING_TIMEOUT)
+      if (fix) onFix()
+      const until = deadline()
+      const a = await designers.thing(thingMessage({ ...req, avoid, fix }), THING_TIMEOUT, until === null ? null : Math.max(0, Math.round((until - this.now()) * 1000)))
       const answer = a.data
       const id = this.deps.store.freeId('things', String(answer.name || 'thing'))
       const design: ThingDesign = {
@@ -617,7 +727,7 @@ export class Game {
       } catch (err) {
         problems = [(err as Error).message]
       }
-      this.deps.store.append({ kind: 'thing', by, ask, curse, genie, model: a.model, ms: design.ms, id, name: design.name, problems, ...(problems.length ? { look: design.look, code: design.code } : {}) })
+      this.deps.store.append({ kind: 'thing', by, ask, curse, genie, aside, model: a.model, ms: design.ms, id, name: design.name, problems, ...(problems.length ? { look: design.look, code: design.code } : {}) })
       if (problems.length === 0 && kind) {
         this.deps.store.saveThing(design)
         this.kinds.set(id, kind)
@@ -626,6 +736,118 @@ export class Game {
       fix = { answer, problems: problems.slice(0, 8) }
     }
     throw new Error('no design passed its trial')
+  }
+
+  // ---------------------------------------------------------------------------- brought to a defence
+
+  /** What a player brings to their defence this break: a new one waits its turn for a designer. */
+  private bringOf(p: Player): Bring {
+    if (!p.bring) {
+      p.bring = { player: p, state: 'queued', ask: null, genie: false, design: null, job: null }
+      this.brings.push(p.bring)
+    }
+    return p.bring
+  }
+
+  /**
+   * Starts this break's brought things in turn, at most BRING_AT_ONCE being made at once, for the
+   * players still here (one who left starts when they are back and a turn comes, or at the round's
+   * start if they play it); none once the game has closed.
+   */
+  private startBrings(): void {
+    if (this.closed) return
+    let making = this.brings.filter((b) => b.state === 'making').length
+    for (const b of this.brings) {
+      if (making >= BRING_AT_ONCE) return
+      if (b.state !== 'queued' || !b.player.conn) continue
+      this.startBring(b, null)
+      making++
+    }
+  }
+
+  /**
+   * A brought thing's design starts, from the words the player has written by now (the last words
+   * win). deadline: when its crate falls back to the archive (null in the break: no crate yet).
+   */
+  private startBring(b: Bring, deadline: number | null): void {
+    const p = b.player
+    b.state = 'making'
+    b.ask = p.bringWords || null
+    b.genie = b.ask !== null && this.deps.random() < GENIE
+    const aside = b.ask === null && this.deps.random() < ASIDE
+    b.design = this.designThing({ ask: b.ask, by: p.name, curse: null, genie: b.genie, aside }, () => (b.job ? b.job.deadline : deadline), () => {
+      if (b.job) this.sentBack(b.job)
+    })
+    b.design
+      .then(
+        () => {
+          b.state = 'ready'
+          if (!b.job) this.note(p, 'What you bring is made. It waits beside you when the round begins.')
+        },
+        (err: Error) => {
+          b.state = 'failed'
+          this.deps.log(`brought by ${p.name}: ${err.message}`)
+          if (!b.job) this.note(p, 'What you bring failed its design: a thing from the archive waits for you instead.')
+        },
+      )
+      .finally(() => {
+        this.lobbyDirty = true
+        this.startBrings()
+      })
+    this.lobbyDirty = true
+  }
+
+  /**
+   * The crate beside a doctor as the round begins, with what they brought to their defence, under
+   * a crate's rules: filled when its design is done, or from the archive DESIGN_LIMIT seconds into
+   * the round. One still waiting its turn starts now, past the break's BRING_AT_ONCE (its crate's
+   * time runs), and a player never Ready brings what they last wrote, made from now; a bot, and
+   * everyone when nothing new can be made, a thing from the archive at once.
+   */
+  private defend(sim: Sim, p: Player, now: number): void {
+    if (p.bot || !this.deps.designers) {
+      const crate = sim.dropCrate(p.id, null)!
+      p.defence = crate.id
+      return sim.fillCrate(crate.id, this.fallbackKind(), { archive: true })
+    }
+    const deadline = now + COUNTDOWN + DESIGN_LIMIT
+    const b = this.bringOf(p)
+    if (b.state === 'queued') this.startBring(b, deadline)
+    const crate = sim.dropCrate(p.id, b.ask)!
+    p.defence = crate.id
+    b.job = { crate: crate.id, sim, deadline, filled: false, player: p.id }
+    this.jobs.push(b.job)
+    this.follow(b.job, b.design!, { archive: false, genie: b.genie, curse: null })
+  }
+
+  // ---------------------------------------------------------------------------- reviews
+
+  /**
+   * A dismissed player's review of a doctor still in: once a round, laid on that doctor's next
+   * request as a curse by them (the designer follows it before reading their words).
+   */
+  private review(p: Player, target: string, text: string): void {
+    const no = this.noReview(p)
+    if (no) return this.note(p, no)
+    const sim = this.sim!
+    const t = sim.doctors.get(target)
+    if (!t?.alive) return this.note(p, 'They are out of this round.')
+    // A review lies on a request, and bots ask for nothing: on one it would never bite.
+    if (t.bot) return this.note(p, `${t.name} is a bot and asks for nothing: review a doctor who asks.`)
+    if (t.curse) return this.note(p, `${t.name} is already under review.`)
+    sim.curse(t, text, 1, p.id)
+    p.reviewed = this.round
+    this.deps.store.append({ kind: 'review', by: p.name, of: t.name, text })
+    this.note(p, `Your review of ${t.name} is lodged.`)
+  }
+
+  /** Why a player may not write a review now, or null: they may (dismissed in a round, with a name, none written yet this round). */
+  private noReview(p: Player): string | null {
+    if (this.phase !== 'round') return 'Reviews are written during a round.'
+    if (!p.name) return 'Give your doctor a name first.'
+    if (this.sim!.doctors.get(p.id)!.alive) return 'Only the dismissed write reviews.'
+    if (p.reviewed === this.round) return 'One review a round.'
+    return null
   }
 
   // ---------------------------------------------------------------------------- arenas
@@ -750,7 +972,7 @@ export class Game {
         if (id) worn[s] = id
       }
       p.look = randomLook(this.deps.random, worn)
-      p.title = this.takeLine('title') ?? 'On the Unexamined Properties of Things'
+      p.title = this.takeLine('title', this.deps.store.lines.titles, []) ?? 'On the Unexamined Properties of Things'
       this.lobbyDirty = true
     }
   }
@@ -793,18 +1015,34 @@ export class Game {
       return this.startRoundIn(LECTURE_HALL)
     }
     this.sim = sim
+    const now = this.now()
+    const playing = this.playing()
+    for (const p of playing) {
+      // A bot's plans are in its round's time, which starts at 0 again: one kept from the last
+      // round walked to where it last stepped round something and stood there, its hands idle, for
+      // as long as that round had lasted.
+      if (p.bot) p.bot = new Bot(p.id, this.deps.random)
+      sim.addDoctor(p.id, p.name, p.bot !== null)
+      sim.setInput(p.id, p.input)
+      sim.syncPresses(p.id)
+    }
+    // The physics world's queries see what was built and added only from a step: one now, so the
+    // crates brought to a defence come in beside their doctors, not on top of them.
+    sim.world.step()
     for (const p of this.players.values()) {
-      if (p.bot || (p.conn && p.name)) {
-        sim.addDoctor(p.id, p.name, p.bot !== null)
-        sim.setInput(p.id, p.input)
-        sim.syncPresses(p.id)
-      }
+      p.defence = null
+      if (playing.includes(p)) this.defend(sim, p, now)
+      p.bring = null
+      p.bringWords = ''
       p.cooldownUntil = 0
-      p.botCrateAt = this.now() + 12 + this.deps.random() * 20
+      p.botCrateAt = now + 12 + this.deps.random() * 20
       if (!p.bot) p.ready = false
     }
+    this.brings = []
     for (const p of this.players.values()) if (p.conn && !sim.doctors.has(p.id)) this.spectate(p)
-    this.startedWith = sim.doctors.size
+    // The doctors who play: a page here without a name watches, and counts for neither.
+    this.startedWith = playing.length
+    this.roomWins ??= winsForRoom(playing.length)
     this.round++
     this.winner = null
     this.setPhase('countdown', COUNTDOWN)
@@ -816,6 +1054,16 @@ export class Game {
   private startRoundIn(src: ArenaSource): void {
     this.nextArena = src
     this.startRound()
+  }
+
+  /** Who plays when a round starts: the bots, and everyone here with a name. */
+  private playing(): Player[] {
+    return [...this.players.values()].filter((p) => p.bot || (p.conn && p.name))
+  }
+
+  /** The rounds to win this match: the chair's choice, else the room's (fixed at the match's first round; before it, as the room is now). */
+  private matchWins(): MatchWins {
+    return this.settings.wins ?? this.roomWins ?? winsForRoom(this.playing().length)
   }
 
   /** A player who came in the middle watches the round. */
@@ -864,7 +1112,9 @@ export class Game {
         break
       case 'countdown':
         if (now >= this.phaseUntil) {
-          this.sim!.live = true
+          this.sim!.goLive()
+          // The next request is a cooldown away for everyone, asked in the countdown or not.
+          for (const p of this.players.values()) p.cooldownUntil = Math.max(p.cooldownUntil, now + REQUEST_COOLDOWN)
           this.setPhase('round', 0)
         }
         break
@@ -872,7 +1122,7 @@ export class Game {
         const sim = this.sim!
         // The committee's patience: past it, everyone still in loses credibility every second.
         if (sim.time > PATIENCE && Math.floor(sim.time) !== Math.floor(sim.time - DT * 2)) {
-          for (const d of sim.alive()) sim.harm(d, PATIENCE_DRAIN, { attacker: 'committee', thing: null, what: "the committee's patience" })
+          for (const d of sim.alive()) sim.harm(d, PATIENCE_DRAIN, { attacker: 'committee', thing: null, fists: null, what: "the committee's patience" })
         }
         const alive = sim.alive()
         if (this.startedWith >= 2 && alive.length <= 1) this.endRound(alive[0]?.id ?? null)
@@ -881,7 +1131,8 @@ export class Game {
       }
       case 'roundEnd':
         if (now >= this.phaseUntil) {
-          const champion = [...this.players.values()].find((p) => p.wins >= WINS_TO_MATCH)
+          // The most wins, should the chair have set fewer than more than one doctor has.
+          const champion = [...this.players.values()].filter((p) => p.wins >= this.matchWins()).sort((a, b) => b.wins - a.wins)[0]
           if (champion) {
             this.winner = champion.id
             this.setPhase('matchEnd', MATCH_END)
@@ -891,6 +1142,7 @@ export class Game {
       case 'matchEnd':
         if (now >= this.phaseUntil) {
           for (const p of this.players.values()) p.wins = 0
+          this.roomWins = null
           this.toDressing()
         }
         break
@@ -914,7 +1166,7 @@ export class Game {
       if (this.phase === 'round') this.botCrates(sim, now)
       for (const job of this.jobs) {
         if (!job.filled && now >= job.deadline) {
-          this.fill(job, this.fallbackKind(), 'Opus took too long: a thing from the archive.')
+          this.fill(job, this.fallbackKind(), { archive: true }, 'Opus took too long: a thing from the archive.')
           this.deps.store.append({ kind: 'late', crate: job.crate })
         }
       }
@@ -929,8 +1181,10 @@ export class Game {
         if (!p.conn) continue
         const me: Me = {
           cooldown: Math.max(0, Math.round((p.cooldownUntil - now) * 10) / 10),
+          crate: this.crateComing(sim, p),
           ...sim.me(p.id),
           note: p.note && p.note.until > now ? p.note.text : null,
+          review: this.noReview(p) === null,
         }
         p.conn.send(`{"type":"snap","me":${JSON.stringify(me)},"snap":${snapText}}`)
       }
@@ -949,9 +1203,9 @@ export class Game {
     for (const p of this.players.values()) {
       if (!p.bot || now < p.botCrateAt) continue
       p.botCrateAt = now + 25 + this.deps.random() * 20
-      if (!sim.doctors.get(p.id)?.alive || sim.me(p.id).crate) continue
-      const crate = sim.dropCrate(p.id)
-      if (crate) sim.fillCrate(crate.id, this.fallbackKind())
+      if (!sim.doctors.get(p.id)?.alive || this.crateComing(sim, p)) continue
+      const crate = sim.dropCrate(p.id, null)
+      if (crate) sim.fillCrate(crate.id, this.fallbackKind(), { archive: true })
     }
   }
 
@@ -976,15 +1230,18 @@ export class Game {
     const chair = this.chair()
     const players: PlayerInfo[] = [...this.players.values()]
       .filter((p) => p.bot || p.conn)
-      .map((p) => ({ id: p.id, name: p.name, title: p.title, look: p.look, color: p.color, bot: p.bot !== null, ready: p.bot !== null || p.ready, dressing: p.dressing, wins: p.wins, chair: p === chair, connected: p.conn !== null || p.bot !== null }))
+      .map((p) => ({ id: p.id, name: p.name, title: p.title, look: p.look, color: p.color, bot: p.bot !== null, ready: p.bot !== null || p.ready, dressing: p.dressing, wins: p.wins, chair: p === chair, connected: p.conn !== null || p.bot !== null, bringing: p.bring?.state ?? 'none' }))
     const arena: ArenaStatus = this.nextArena ? { state: 'ready', name: this.nextArena.name } : this.arenaJob ? { state: 'building', since: Math.round(now - this.arenaJob.since), expect: this.arenaJob.expect, model: this.arenaJob.model } : { state: 'none' }
     const timer = this.countdown(now)
     const winner = this.winner ? (this.players.get(this.winner)?.name ?? null) : null
-    return { players, settings: this.settings, phase: this.phase, timer, round: this.round, arena, winner, join: this.deps.join }
+    return { players, settings: this.settings, phase: this.phase, timer, round: this.round, arena, winner, wins: this.matchWins(), join: this.deps.join }
   }
 }
 
 const capital = (s: string) => s.slice(0, 1).toUpperCase() + s.slice(1)
+
+/** The rounds to win a match left to the room: fewer in a bigger room (first to 5 among 8 equal doctors took a median 19 rounds). */
+const winsForRoom = (doctors: number): MatchWins => (doctors <= 3 ? 5 : doctors <= 5 ? 4 : 3)
 
 /** An input as the sim may take it: numbers in range, counters as numbers. */
 function cleanInput(v: unknown): Input {

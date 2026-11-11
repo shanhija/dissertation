@@ -1,9 +1,10 @@
 /**
  * Bots, for trying the game alone. A bot reads the sim the way a player reads the screen and
  * answers with an Input: it goes for a crate or a loose thing when its hands are empty (and for a
- * near one when one hand is), else for the nearest doctor, aims with a little wobble, uses what it
- * holds when the target is in sight (with the hand whose thing may still take from that doctor),
- * shoves when close, jumps when stuck or when the target is above, and keeps off edges.
+ * near one when one hand is; beside a crate not yet open to it, it waits), else for the nearest
+ * doctor, aims with a little wobble, uses what it holds when the target is in sight (with the hand
+ * whose thing may still take from that doctor), shoves when close, jumps when stuck or when the
+ * target is above, and keeps off edges.
  */
 
 import { NO_INPUT, type Hand, type Input, type Vec3 } from '../protocol'
@@ -48,17 +49,21 @@ export class Bot {
     // What to go for: a crate or a loose thing with empty hands, else a doctor.
     let goal: Vec3 | null = null
     let goalIsPickup = false
+    /** The goal is a crate not yet open to it: it stands beside it rather than walk into it. */
+    let waitsBy = false
     const empty = d.hands[0] === null && d.hands[1] === null
     if (empty || d.hands[0] === null || d.hands[1] === null) {
       // Empty-handed it looks far; with one hand full, only near.
       let best = empty ? 22 : 8
+      // One not ready, or not yet open to it (its asker's first seconds), it waits by.
       for (const c of sim.crates.values()) {
         if (c.state === 'arriving') continue
         const dist = len(sub(c.p, d.pos))
         if (dist < best) {
           best = dist
           goal = c.p
-          goalIsPickup = c.state === 'ready'
+          goalIsPickup = sim.mayOpen(c, d)
+          waitsBy = !goalIsPickup
         }
       }
       for (const th of sim.things.values()) {
@@ -69,6 +74,7 @@ export class Bot {
           best = dist
           goal = [p.x, p.y, p.z]
           goalIsPickup = true
+          waitsBy = false
         }
       }
     }
@@ -93,6 +99,7 @@ export class Bot {
     if (this.detour && t < this.detourUntil && goal) {
       goal = this.detour
       goalIsPickup = false
+      waitsBy = false
       fight = false
     }
 
@@ -105,7 +112,7 @@ export class Bot {
       yaw = Math.atan2(to[0], to[2]) + (fight ? Math.sin(t * 1.7 + this.id.length) * 0.05 : 0)
       const aimAt = fight && foe ? foe.pos[1] + EYE * 0.75 * foe.size : goal[1]
       pitch = Math.atan2(aimAt - (d.pos[1] + EYE * d.size), Math.max(0.5, flat)) + (fight ? Math.cos(t * 2.3) * 0.03 : 0)
-      const keep = fight ? (d.hands[0] || d.hands[1] ? 5 : 0.9) : 0.6
+      const keep = fight ? (d.hands[0] || d.hands[1] ? 5 : 0.9) : waitsBy ? 1.4 : 0.6
       if (flat > keep) move = [0, 1]
       if (fight && t > this.strafeUntil) {
         this.strafeUntil = t + 0.8 + this.random() * 1.5

@@ -6,7 +6,9 @@
  * a body or a thing its own, anything fixed or stuck too heavy to move.
  *
  * Fairness, as for holds: a doctor pulled hard by a field or a taut tie counts as held (sim.ts's
- * hold rule), and once they shake it off, fields and ties let them be for HOLD_REST.
+ * control rule), and once they shake it off, fields and ties let them be for HOLD_MAX; a blast
+ * still reaches them, but only pushes (sim.ts's flopFree). A doctor a force moves is the doing of
+ * whoever's thing made it (sim.blame).
  */
 
 import RAPIER from '@dimforge/rapier3d-compat'
@@ -161,7 +163,7 @@ export function thingActor(sim: Sim, t: Thing): Actor | null {
 function everything(sim: Sim, spare: Doctor | null): Actor[] {
   const out: Actor[] = []
   for (const d of sim.doctors.values()) {
-    if (d === spare || (d.alive && sim.time < d.freeUntil)) continue
+    if (d === spare) continue
     const a = doctorActor(d)
     if (a) out.push(a)
   }
@@ -269,6 +271,8 @@ export function stepFields(sim: Sim, dt: number): void {
     }
     const spare = f.source.thing?.holder ? (sim.doctors.get(f.source.thing.holder) ?? null) : null
     for (const a of everything(sim, spare)) {
+      // Shaken free: fields let them be.
+      if (a.doctor?.alive && sim.time < a.doctor.freeUntil) continue
       const rel = sub(a.pos, c)
       const dist = len(rel)
       if (dist > f.radius) continue
@@ -279,7 +283,10 @@ export function stepFields(sim: Sim, dt: number): void {
       const flat = Math.hypot(rel[0], rel[2])
       if (flat > 0.1) acc = add(acc, [(rel[2] / flat) * f.swirl, 0, (-rel[0] / flat) * f.swirl])
       acc = capLen(add(acc, scale(a.vel, -f.drag)), 150)
-      if (a.doctor && !a.doctor.rag) a.doctor.forced += len(acc) * k
+      if (a.doctor) {
+        if (!a.doctor.rag) a.doctor.forced += len(acc) * k
+        sim.blame(a.doctor, f.source)
+      }
       a.add(scale(acc, k * dt))
     }
   }
@@ -308,6 +315,8 @@ export type TieRef = { kind: 'point'; p: Vec3 } | { kind: 'doctor'; id: string }
 export interface Tie {
   id: string
   owner: string
+  /** Whose doing a doctor it pulls is. */
+  source: Source
   a: TieRef
   b: TieRef
   length: number
@@ -367,6 +376,8 @@ export function stepTies(sim: Sim, dt: number): void {
     dv = Math.max(-20, Math.min(20, dv))
     a.add(scale(n, (-dv * wa) / (wa + wb)))
     b.add(scale(n, (dv * wb) / (wa + wb)))
+    if (a.doctor) sim.blame(a.doctor, t.source)
+    if (b.doctor) sim.blame(b.doctor, t.source)
     // Held, for the hold rule: by a rope pulling at all, by a spring pulling hard.
     const hard = t.spring <= 0 || Math.abs(dv) / dt > FORCED
     if (hard) {
@@ -462,5 +473,6 @@ export function momentum(sim: Sim, b: Body, d: Doctor, came: Vec3): void {
   const dv = (vn * mb * 1.4) / (mb + md)
   if (dv < 0.8) return
   const flat = norm([n[0], 0, n[2]])
+  sim.blame(d, b.source)
   sim.knock(d, [flat[0] * dv, Math.max(n[1], 0.25) * dv, flat[2] * dv])
 }

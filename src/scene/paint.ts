@@ -7,10 +7,13 @@
  *
  * - `paint(material)` lays a sheet of paper over the surface from the three sides in the mesh's
  *   own space (so it stays on a moving part): fine fibres and grain in relief, a slow mottle with
- *   foxed spots; dust settled on what faces up; engraved hatching where the light falls off,
- *   crossed in the dark; the sun's and lamps' light in three soft bands; a pale rim if asked. How
- *   much of each follows the lighting tab (lighting.ts) live, through uniforms all painted
- *   materials share. The shadow side's hue and the page's own paper are the finishing grade's (post.ts).
+ *   foxed spots; a fine dust settled on what faces up; engraved hatching where the light falls off
+ *   against the place's own light (`setEngraving`), crossed in the dark, its lines a steady few
+ *   pixels apart on the screen whatever the size of the thing or how far it is, as on a printed
+ *   page (2026-11-11: up close, lines spaced in metres crossed into plaid, "blocky"); the sun's and
+ *   lamps' light in three soft bands; a pale rim if asked. How much of each follows the lighting
+ *   tab (lighting.ts) live, through uniforms all painted materials share. The shadow side's hue and
+ *   the page's own paper are the finishing grade's (post.ts).
  * - `harmonize` pulls a colour into an old print's range: no pure black or white, the inks faded
  *   (glowing colour keeps more). Every model's colours pass through it once.
  * - `strokeTexture` is a flat brush's dabs, for the portraits, which are paintings on the walls.
@@ -203,14 +206,14 @@ export interface PaintOpts {
   bands: number
   /** How far the paper's mottle strays, 0..1. */
   tone: number
-  /** Metres between the engraved lines in the shadows, and how much engraving it takes (0 none: a painting). */
-  hatch: number
+  /** How much engraving it takes in the shadows (0 none: a painting). */
   ink: number
 }
 
-export const PAINT_MODEL: PaintOpts = { stroke: 0.9, relief: 0.6, bands: 1, tone: 0.1, hatch: 0.04, ink: 1 }
-export const PAINT_DOCTOR: PaintOpts = { stroke: 0.7, relief: 0.45, bands: 0.85, tone: 0.06, hatch: 0.03, ink: 0.4 }
-export const PAINT_SURFACE: PaintOpts = { stroke: 3.4, relief: 0.4, bands: 0.7, tone: 0.1, hatch: 0.06, ink: 1 }
+/** Made models: a fine sheet with a light grain, the one relief they have (a wall's plaster squeezed onto a thing in hand looked crumpled). */
+export const PAINT_MODEL: PaintOpts = { stroke: 0.3, relief: 0.2, bands: 1, tone: 0.1, ink: 1 }
+export const PAINT_DOCTOR: PaintOpts = { stroke: 0.7, relief: 0.45, bands: 0.85, tone: 0.06, ink: 0.4 }
+export const PAINT_SURFACE: PaintOpts = { stroke: 3.4, relief: 0.4, bands: 0.7, tone: 0.1, ink: 1 }
 
 /** What every painted material shares, following the lighting tab. */
 const SHARED = {
@@ -218,7 +221,8 @@ const SHARED = {
   paintRim: { value: 0 },
   paintGrain: { value: 1 },
   paintHatch: { value: 0 },
-  paintHatchScale: { value: 1 },
+  paintHatchPixels: { value: 8 },
+  paintLightRef: { value: 1 },
   paintDust: { value: 0 },
   paintMatte: { value: 0 },
 }
@@ -228,10 +232,21 @@ onLighting(() => {
   SHARED.paintRim.value = l.rim
   SHARED.paintGrain.value = l.grain
   SHARED.paintHatch.value = l.hatching
-  SHARED.paintHatchScale.value = l.hatchSize
   SHARED.paintDust.value = l.dust
   SHARED.paintMatte.value = l.matte
 })
+
+/**
+ * Where the engraving is drawn: the light it is judged against, as a share of an open court's in
+ * full sun (1 under the sky, less where a roof keeps the sun out and the place is lit by what
+ * comes in and its own lamps: a shadow is darker than the place it is in, not darker than a sunny
+ * day; 2026-11-11, judged against the sun, the lines covered whole interiors), and how many of
+ * the drawing's pixels apart its lines are.
+ */
+export function setEngraving(lightRef: number, pixels: number): void {
+  SHARED.paintLightRef.value = lightRef
+  SHARED.paintHatchPixels.value = pixels
+}
 
 const DOT_NL = 'float dotNL = saturate( dot( geometryNormal, directLight.direction ) );'
 const LIGHTS = ShaderChunk.lights_physical_pars_fragment.replace(
@@ -252,13 +267,13 @@ uniform float paintStroke;
 uniform float paintRelief;
 uniform float paintBands;
 uniform float paintTone;
-uniform float paintHatchSize;
 uniform float paintInk;
 uniform float paintBandScale;
 uniform float paintRim;
 uniform float paintGrain;
 uniform float paintHatch;
-uniform float paintHatchScale;
+uniform float paintHatchPixels;
+uniform float paintLightRef;
 uniform float paintDust;
 uniform float paintMatte;
 uniform mat3 normalMatrix;
@@ -271,11 +286,16 @@ float paintBand( float x ) {
 	float light = smoothstep( 0.5, 0.6, x );
 	return mix( mix( x * 0.5, 0.4, mid ), 0.86, light );
 }
-// An engraved line every unit of c, w wide (0..0.5), smoothed over a pixel.
-float paintLine( float c, float w ) {
+// An engraved line every unit of c, w wide (0..0.5), its edges smoothed over a pixel (aa: how much c changes in one).
+float paintLine( float c, float w, float aa ) {
 	float d = 0.5 - abs( fract( c ) - 0.5 );
-	float aa = fwidth( c );
-	return 1.0 - smoothstep( w - aa, w + aa, d );
+	return 1.0 - smoothstep( w - 0.6 * aa, w + 0.6 * aa, d );
+}
+// The engraving at one spacing (q in its lines): lines one way as strong as asked, and across them.
+float paintLines( vec3 q, vec3 wt, float w, float aa, vec2 strength ) {
+	float one = wt.x * paintLine( q.z + q.y, w, aa ) + wt.y * paintLine( q.x + q.z, w, aa ) + wt.z * paintLine( q.x + q.y, w, aa );
+	float two = wt.x * paintLine( q.z - q.y, w, aa ) + wt.y * paintLine( q.x - q.z, w, aa ) + wt.z * paintLine( q.x - q.y, w, aa );
+	return one * strength.x + two * strength.y;
 }
 `
 const FRAGMENT_PAPER = `
@@ -298,10 +318,12 @@ const FRAGMENT_PAPER = `
 		normal = normalize( normal + ( normalize( normalMatrix * bent ) - normalize( normalMatrix * pn ) ) );
 		float mottle = sx.z * wt.x + sy.z * wt.y + sz.z * wt.z;
 		diffuseColor.rgb *= 1.0 + ( mottle - 0.5 ) * 2.0 * paintTone;
-		// Dust settled in patches on what faces up; dust is matte.
+		// Dust settled on what faces up: a thin film, finer and thicker in the paper's grain (patches
+		// of it read as camouflage), lighter on dark paint, where it stood out; dust is matte.
 		float up = normalize( vPaintUp ).y;
-		float clumps = smoothstep( 0.4, 0.62, 1.0 - mottle );
-		paintDusty = clamp( smoothstep( 0.4, 0.95, up ) * paintDust * clumps, 0.0, 1.0 );
+		float grain = clamp( 0.5 + ( sy.x + sy.y - 1.0 ) * 2.0, 0.0, 1.0 );
+		float under = smoothstep( 0.02, 0.2, dot( diffuseColor.rgb, vec3( 0.2126, 0.7152, 0.0722 ) ) );
+		paintDusty = clamp( smoothstep( 0.4, 0.95, up ) * paintDust * mix( 0.5, 1.0, grain ) * mix( 0.35, 1.0, under ), 0.0, 1.0 );
 		diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.47, 0.43, 0.36 ), paintDusty * 0.55 );
 		roughnessFactor = mix( roughnessFactor, 1.0, paintDusty );
 	}
@@ -309,19 +331,26 @@ const FRAGMENT_PAPER = `
 const FRAGMENT_INK = `
 	{
 		// Engraved lines where the light falls off (by the light that arrives, not by how dark the
-		// paint is): one way in the half shadow, crossed in the dark. Gone where they would be
-		// finer than the screen can draw.
+		// paint is, so a metal by the light against its own colour), judged against the place's
+		// light: one way in the half shadow, crossed in the deep shadow under things. The lines keep
+		// a steady spacing on the screen: of the spacings a centimetre times a power of two (fixed
+		// to the surface, so the lines do not swim), the two either side of the asked one, the
+		// nearer stronger.
 		vec3 lw = vec3( 0.2126, 0.7152, 0.0722 );
-		float irr = dot( totalDiffuse, lw ) / max( dot( material.diffuseColor, lw ), 0.03 );
-		float dark = 1.0 - smoothstep( 0.35, 1.9, irr );
-		if ( paintHatch * paintInk > 0.0 && dark > 0.0 ) {
-			vec3 hp = vPaintPos / ( paintHatchSize * paintHatchScale );
-			float w = mix( 0.04, 0.2, dark );
-			float one = paintWt.x * paintLine( hp.z + hp.y, w ) + paintWt.y * paintLine( hp.x + hp.z, w ) + paintWt.z * paintLine( hp.x + hp.y, w );
-			float two = paintWt.x * paintLine( hp.z - hp.y, w ) + paintWt.y * paintLine( hp.x - hp.z, w ) + paintWt.z * paintLine( hp.x - hp.y, w );
-			float fine = fwidth( hp.x + hp.y + hp.z );
-			float fade = 1.0 - smoothstep( 0.2, 0.45, fine );
-			float ink = ( one * smoothstep( 0.12, 0.5, dark ) + two * smoothstep( 0.78, 0.97, dark ) ) * fade * paintHatch * paintInk;
+		float lit = dot( totalDiffuse, lw ) / max( dot( material.diffuseContribution, lw ), 0.03 * ( 1.0 - material.metalness ) + 1e-4 ) / paintLightRef;
+		vec2 strength = vec2( 1.0 - smoothstep( 0.55, 1.1, lit ), 1.0 - smoothstep( 0.1, 0.22, lit ) ) * paintHatch * paintInk;
+		vec3 hp = vPaintPos * 100.0;
+		vec3 across = vec3( hp.z + hp.y, hp.x + hp.z, hp.x + hp.y );
+		vec3 ddx = dFdx( across );
+		vec3 ddy = dFdy( across );
+		float per = dot( paintWt, sqrt( ddx * ddx + ddy * ddy ) );
+		float level = log2( max( per, 1e-6 ) * paintHatchPixels );
+		float octave = floor( level );
+		float k = level - octave;
+		if ( strength.x > 0.0 ) {
+			float w = mix( 0.06, 0.14, 1.0 - smoothstep( 0.1, 0.8, lit ) );
+			float s0 = exp2( -octave );
+			float ink = paintLines( hp * s0, paintWt, w, per * s0, strength ) * ( 1.0 - k ) + paintLines( hp * s0 * 0.5, paintWt, w, per * s0 * 0.5, strength ) * k;
 			outgoingLight *= 1.0 - 0.6 * clamp( ink, 0.0, 1.0 );
 		}
 		// A pale edge on what turns away from the eye.
@@ -339,7 +368,6 @@ export function paint<M extends MeshStandardMaterial>(m: M, o: PaintOpts = PAINT
     shader.uniforms.paintRelief = { value: o.relief }
     shader.uniforms.paintBands = { value: o.bands }
     shader.uniforms.paintTone = { value: o.tone }
-    shader.uniforms.paintHatchSize = { value: o.hatch }
     shader.uniforms.paintInk = { value: o.ink }
     Object.assign(shader.uniforms, SHARED)
     shader.vertexShader =

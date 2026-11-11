@@ -5,22 +5,27 @@
  * turns a part with everything on it.
  */
 
-import { Color, Euler, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector2, type Material } from 'three'
+import { Color, Euler, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, type Material } from 'three'
 
 import type { PartDef } from '../model/kit'
 import { buildModel, type Model } from '../model/mesh'
 import type { Recipe, Vec3 } from '../protocol'
-import { boxUV, surfaceMaps } from './materials'
-import { PAINT_MODEL, harmonizeColors, paint } from './paint'
+import { PAINT_DOCTOR, PAINT_MODEL, harmonizeColors, paint, type PaintOpts } from './paint'
+
+const modelMaterial = (o: PaintOpts) => paint(new MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.05 }), o)
 
 let solid: MeshStandardMaterial | null = null
-/** Models' shapes: their own colours over a fine grain, a little shine. */
+/** Models' shapes: their own colours on the page's fine paper, a little shine. */
 export function solidMaterial(): MeshStandardMaterial {
-  if (!solid) {
-    const { map, normal } = surfaceMaps('plaster')
-    solid = paint(new MeshStandardMaterial({ vertexColors: true, map, normalMap: normal, normalScale: new Vector2(0.6, 0.6), roughness: 0.62, metalness: 0.05 }), PAINT_MODEL)
-  }
+  solid ??= modelMaterial(PAINT_MODEL)
   return solid
+}
+
+let worn: MeshStandardMaterial | null = null
+/** What a doctor wears (hats, hair, capes), painted as the doctor under it is, not engraved as a thing in hand. */
+export function wornMaterial(): MeshStandardMaterial {
+  worn ??= modelMaterial(PAINT_DOCTOR)
+  return worn
 }
 
 /** Glowing shapes: brighter than white, so the bloom catches them (the lighting tab scales it). */
@@ -29,19 +34,14 @@ export const GLOW = new MeshBasicMaterial({ vertexColors: true, color: new Color
 
 const built = new WeakMap<Recipe, Model>()
 
-/** A model's geometry, built once per recipe, with texture coordinates for its grain (a tile per 0.4 m) and its colours brought into the painting's range. */
+/** A model's geometry as drawn (the insides of open shells too), built once per recipe, its colours brought into the painting's range. */
 export function modelOf(recipe: Recipe): Model {
   let m = built.get(recipe)
   if (!m) {
-    m = buildModel(recipe)
+    m = buildModel(recipe, 'drawn')
     for (const g of m.parts.values()) {
-      if (g.solid) {
-        boxUV(g.solid, 0.4)
-        const c = g.solid.getAttribute('color')
-        if (c) harmonizeColors(c)
-      }
-      const c = g.glow?.getAttribute('color')
-      if (c) harmonizeColors(c, true)
+      if (g.solid) harmonizeColors(g.solid.getAttribute('color'))
+      if (g.glow) harmonizeColors(g.glow.getAttribute('color'), true)
     }
     built.set(recipe, m)
   }

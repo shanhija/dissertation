@@ -31,6 +31,15 @@ import type { Recipe, Shape } from './kit'
  * collider that is exactly the model's shape (sim/shapes.ts).
  */
 
+/**
+ * What the geometry is for. Drawn, an open shell (a dome, a bowl, a bell, a hat's brim: a lathe
+ * whose profile neither ends on its axis at both ends nor comes back to where it began) has an
+ * inside too, faces turned inward over the outward ones, so it shows from within (a dome Opus
+ * builds over a room was sky from inside). A collider has no sides to show, and its triangles
+ * count against the arena's budget: it gets the shell once.
+ */
+export type ModelUse = 'drawn' | 'collider'
+
 /** One part's shapes (null: the model's own frame): the lit ones merged, and the glowing ones. */
 export interface PartGeometry {
   solid: BufferGeometry | null
@@ -65,16 +74,32 @@ function outwardProfile(points: number[][]): number[][] {
   return (flat ? points.at(-1)![0]! > points[0]![0]! : area < 0) ? [...points].reverse() : points
 }
 
-/** A lathe through [r, y] points that already run the way that faces it outward. */
-function latheOf(points: number[][]): BufferGeometry {
-  return new LatheGeometry(
-    points.map((p) => new Vector2(p[0], p[1])),
-    12,
+/** A lathe through [r, y] points that already run the way that faces it outward; drawn, an open one with its inside. */
+function latheOf(points: number[][], use: ModelUse): BufferGeometry {
+  const outside = flatten(
+    new LatheGeometry(
+      points.map((p) => new Vector2(p[0], p[1])),
+      12,
+    ),
   )
+  // Closed: both ends on the axis, or the profile back where it began (a ring turned round the axis).
+  const [r0, y0] = points[0]!
+  const [r1, y1] = points.at(-1)!
+  const open = (r0! > 1e-6 || r1! > 1e-6) && Math.hypot(r1! - r0!, y1! - y0!) > 1e-6
+  return use === 'drawn' && open ? mergeAll([outside, insideOf(outside)]) : outside
+}
+
+/** The same triangles facing the other way (corners swapped, normals turned round): an open shell's inside. */
+function insideOf(g: BufferGeometry): BufferGeometry {
+  const inside = g.clone()
+  flipWinding(inside)
+  const n = inside.getAttribute('normal')
+  for (let i = 0; i < n.count; i++) n.setXYZ(i, -n.getX(i), -n.getY(i), -n.getZ(i))
+  return inside
 }
 
 /** The shape's own geometry, centred as the kit says, before it is moved into place. */
-function shapeGeometry(s: Shape): BufferGeometry {
+function shapeGeometry(s: Shape, use: ModelUse): BufferGeometry {
   const d = s.dims
   switch (s.kind) {
     case 'box':
@@ -88,7 +113,7 @@ function shapeGeometry(s: Shape): BufferGeometry {
     case 'capsule':
       return new CapsuleGeometry(d[0], d[1], 3, 12)
     case 'lathe':
-      return latheOf(outwardProfile(s.points!))
+      return latheOf(outwardProfile(s.points!), use)
     case 'extrude':
       return new ExtrudeGeometry(new Outline(s.points!.map((p) => new Vector2(p[0], p[1]))), { depth: d[0], bevelEnabled: false }).translate(0, 0, -d[0] / 2)
     case 'tube': {
@@ -120,8 +145,7 @@ function mergeAll(list: BufferGeometry[]): BufferGeometry {
 
 /** A mirrored shape (a negative scale) turns its faces inside out: swapping two corners of every triangle turns them back. */
 function flipWinding(g: BufferGeometry) {
-  for (const name of ['position', 'normal', 'color']) {
-    const a = g.getAttribute(name)
+  for (const a of Object.values(g.attributes)) {
     for (let i = 0; i < a.count; i += 3) {
       for (let k = 0; k < a.itemSize; k++) {
         const v = a.getComponent(i + 1, k)
@@ -133,8 +157,8 @@ function flipWinding(g: BufferGeometry) {
 }
 
 /** One shape in its part's frame, every vertex its colour. */
-function placed(s: Shape): BufferGeometry {
-  const g = flatten(shapeGeometry(s))
+function placed(s: Shape, use: ModelUse): BufferGeometry {
+  const g = flatten(shapeGeometry(s, use))
   const color = new Color(s.color)
   matrix.compose(at.set(s.at[0], s.at[1], s.at[2]), quat.setFromEuler(euler.set(s.rot[0], s.rot[1], s.rot[2], 'XYZ')), stretch.set(s.scale[0], s.scale[1], s.scale[2]))
   g.applyMatrix4(matrix)
@@ -146,7 +170,7 @@ function placed(s: Shape): BufferGeometry {
   return g
 }
 
-export function buildModel(recipe: Recipe): Model {
+export function buildModel(recipe: Recipe, use: ModelUse): Model {
   const lists = new Map<string | null, { solid: BufferGeometry[]; glow: BufferGeometry[] }>()
   for (const s of recipe.shapes) {
     let list = lists.get(s.part)
@@ -154,7 +178,7 @@ export function buildModel(recipe: Recipe): Model {
       list = { solid: [], glow: [] }
       lists.set(s.part, list)
     }
-    ;(s.glow ? list.glow : list.solid).push(placed(s))
+    ;(s.glow ? list.glow : list.solid).push(placed(s, use))
   }
   const parts = new Map<string | null, PartGeometry>()
   for (const [part, list] of lists) parts.set(part, { solid: list.solid.length ? mergeAll(list.solid) : null, glow: list.glow.length ? mergeAll(list.glow) : null })

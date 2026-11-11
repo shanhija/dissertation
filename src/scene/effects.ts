@@ -25,14 +25,23 @@ import {
 } from 'three'
 
 import type { Vec3 } from '../protocol'
-import { Label } from './doctor'
+import { ScreenLabel } from './doctor'
 import { lighting } from '../lighting'
 import { harmonize } from './paint'
 import { LABEL_FONT } from '../fonts'
 
+/** Floating words' size on the screen, in the page's pixels. */
+const FLOAT = [128, 32] as const
+
 const CYL = new CylinderGeometry(0.5, 0.5, 1, 10)
 /** Glowing colours are drawn this much brighter than white, so the bloom catches them. */
 const HOT = 2.2
+/**
+ * Light is drawn over paint: fire, sparks, beams and glowing sights after smoke and dust. Each
+ * cloud's points sit round the object's origin, so three.js sorts them by when they were made, and
+ * a fireball made before its smoke was drawn under it, a grey disc with an orange rim.
+ */
+export const LIGHT_ORDER = 1
 
 const CLOUD_VERTEX = `
 attribute float born;
@@ -188,6 +197,7 @@ class Cloud {
     })
     this.points = new Points(this.geometry, this.material)
     this.points.frustumCulled = false
+    if (opts.glow) this.points.renderOrder = LIGHT_ORDER
   }
 
   /** Lets a puff go from a point, drifting at v, born at time t. */
@@ -211,6 +221,29 @@ class Cloud {
     this.material.dispose()
   }
 }
+
+/** Bits flying, in a colour (glowing: brighter than white and added to what is behind), each stroke `size` metres across. */
+function bitMaterial(color: string, glow: boolean, size: number): ShaderMaterial {
+  const c = harmonize(new Color(color), glow)
+  if (glow) c.multiplyScalar(HOT)
+  return new ShaderMaterial({
+    vertexShader: BIT_VERTEX,
+    fragmentShader: BIT_FRAGMENT,
+    transparent: true,
+    depthWrite: false,
+    blending: glow ? AdditiveBlending : NormalBlending,
+    uniforms: {
+      color: { value: c },
+      opacity: { value: 1 },
+      size: { value: size },
+      pixels: { value: 600 },
+      screen: { value: 600 },
+    },
+  })
+}
+
+/** A beam's light, to fade as it goes. */
+const beamMaterial = (color: string) => new MeshBasicMaterial({ color: harmonize(new Color(color), true).multiplyScalar(1.6), transparent: true, depthWrite: false, toneMapped: true })
 
 /**
  * A trail of smoke behind a body: puffs let go along its path, thin beside the body and swelling
@@ -367,24 +400,12 @@ export class Effects {
     g.setAttribute('position', new Float32BufferAttribute(pos, 3))
     g.setAttribute('vel', new Float32BufferAttribute(vel.flat(), 3))
     g.setAttribute('seed', new Float32BufferAttribute(Float32Array.from({ length: n }, () => Math.random()), 1))
-    const c = harmonize(new Color(color), glow)
-    if (glow) c.multiplyScalar(HOT)
-    const m = new ShaderMaterial({
-      vertexShader: BIT_VERTEX,
-      fragmentShader: BIT_FRAGMENT,
-      transparent: true,
-      depthWrite: false,
-      blending: glow ? AdditiveBlending : NormalBlending,
-      uniforms: {
-        color: { value: c },
-        opacity: { value: 1 },
-        size: { value: (glow ? 0.07 : 0.11) * Math.max(0.6, size) },
-        pixels: { value: this.pixels },
-        screen: { value: this.screen },
-      },
-    })
+    const m = bitMaterial(color, glow, (glow ? 0.07 : 0.11) * Math.max(0.6, size))
+    m.uniforms.pixels!.value = this.pixels
+    m.uniforms.screen!.value = this.screen
     const pts = new Points(g, m)
     pts.frustumCulled = false
+    if (glow) pts.renderOrder = LIGHT_ORDER
     this.layer.add(pts)
     const t0 = now
     let last = now
@@ -421,11 +442,12 @@ export class Effects {
     const b = new Vector3(...to)
     const length = a.distanceTo(b)
     if (length < 1e-4) return
-    const m = new MeshBasicMaterial({ color: harmonize(new Color(color), true).multiplyScalar(1.6), transparent: true, depthWrite: false, toneMapped: true })
+    const m = beamMaterial(color)
     const segs = jag > 0 ? Math.max(4, Math.min(18, Math.round(length / 0.3))) : 1
     const group = new Group()
     const meshes = Array.from({ length: segs }, () => {
       const mesh = new Mesh(CYL, m)
+      mesh.renderOrder = LIGHT_ORDER
       group.add(mesh)
       return mesh
     })
@@ -510,16 +532,22 @@ export class Effects {
     lamp.secs = Math.max(0.15, secs)
   }
 
-  floatText(at: Vec3, text: string, color: string, now: number): void {
-    const label = new Label(256, 64, 1.2)
+  /**
+   * Words floating up from a point (a blow's damage), the same size on the screen near or far:
+   * their foot `above` page pixels over it (clear of what stands there), or with null, their
+   * middle on it.
+   */
+  floatText(at: Vec3, text: string, color: string, now: number, above: number | null): void {
+    const label = new ScreenLabel(FLOAT[0], FLOAT[1])
+    label.sprite.center.set(0.5, above === null ? 0.5 : -above / FLOAT[1])
     label.draw(text, (g, w) => {
-      g.font = `700 34px ${LABEL_FONT}`
+      g.font = `700 40px ${LABEL_FONT}`
       g.textAlign = 'center'
-      g.lineWidth = 6
+      g.lineWidth = 7
       g.strokeStyle = 'rgba(20,10,5,0.9)'
-      g.strokeText(text, w / 2, 44)
+      g.strokeText(text, w / 2, 46)
       g.fillStyle = color
-      g.fillText(text, w / 2, 44)
+      g.fillText(text, w / 2, 46)
     })
     label.sprite.position.set(...at)
     this.layer.add(label.sprite)
@@ -537,11 +565,44 @@ export class Effects {
     })
   }
 
+  /** One of each kind of effect's drawing (made to show nothing), kept while these effects last: see `warm`. */
+  private kept: { group: Group; dispose: () => void } | null = null
+
+  /**
+   * One cloud, one spray of bits, one beam and one floating number, showing nothing, for World to
+   * draw once before the round so their shaders are made in the countdown; kept until these
+   * effects go, so a shader is not let go of when the last of its kind is gone (and made again on
+   * the next).
+   */
+  warm(): Group {
+    this.kept?.dispose()
+    const group = new Group()
+    const cloud = new Cloud(1, { color: '#ffffff', size0: 1, size1: 1, life: 1, rise: 0, glow: true, opacity: 1, near: 0 })
+    const bits = new Points(new BufferGeometry().setAttribute('position', new Float32BufferAttribute([0, 0, 0], 3)), bitMaterial('#ffffff', false, 0.1))
+    bits.frustumCulled = false
+    const beam = new Mesh(CYL, beamMaterial('#ffffff'))
+    const number = new ScreenLabel(FLOAT[0], FLOAT[1])
+    group.add(cloud.points, bits, beam, number.sprite)
+    this.kept = {
+      group,
+      dispose: () => {
+        group.removeFromParent()
+        cloud.dispose()
+        bits.geometry.dispose()
+        bits.material.dispose()
+        beam.material.dispose()
+        number.dispose()
+      },
+    }
+    return group
+  }
+
   dispose(): void {
     for (const e of this.live) e.dispose()
     this.live.length = 0
     for (const t of [...this.trails, ...this.leftTrails]) t.dispose()
     this.leftTrails.clear()
+    this.kept?.dispose()
     this.layer.removeFromParent()
   }
 }

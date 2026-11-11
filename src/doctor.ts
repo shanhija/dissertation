@@ -28,7 +28,13 @@ export const SLOT_FRAMES: Record<Slot, { origin: Vec3; about: string }> = {
   feet: { origin: [0.1, 0, 0], about: 'on the ground under the left ankle, toes toward +z, the outer side toward +x: the foot is 0.12 wide and 0.1 high, from the heel at z -0.1 to the toes at z 0.19, the trouser leg ending just above it at y 0.04. The code makes the left foot and the right wears it mirrored; it moves with each foot and takes the place of the shoes' },
 }
 
-export const PLAYER_COLORS = ['#e05a47', '#3f8fd8', '#5bb55b', '#e3b23c', '#a46ad8', '#e07fb8', '#3cc0b8', '#e08a3a'] as const
+/**
+ * Who is who: the colour of each player's name and of the pip over their head at any distance.
+ * Told apart on the screen, as the tags are drawn (under the grade), and as a glowing shape in the
+ * colour would be (harmonized, tone-mapped, graded): no two nearer than 0.14 in OKLab, light ones
+ * and dark ones as well as hues, the most different first, as players come in that order.
+ */
+export const PLAYER_COLORS = ['#e0401c', '#2f7fe0', '#e0a400', '#3e9a2e', '#b04ae0', '#10c0dc', '#ff70d8', '#fff8d8'] as const
 
 const SKINS = ['#f3d2b3', '#e8b892', '#c98e66', '#a06a44', '#7a4b2e', '#f5dccb', '#d9a27a', '#5c3a24']
 const EYES = ['#3a2a1e', '#2a4a7a', '#3f6a3a', '#5a5a5a', '#6a3a1e']

@@ -6,13 +6,17 @@
  */
 
 import { BODY, SLOT_FRAMES } from '../doctor'
-import { BUDGET_WINDOW, BUDGETS, DESIGN_LIMIT, GAITS, HIT_CAP, HOLD_MAX, HOLD_REST, MATERIALS, PER_SECOND_CAP, SLOTS, SOUNDS, type ArenaSetting, type Gait, type Look } from '../protocol'
+import { BUDGET_WINDOW, BUDGETS, CRATE_OWNER_ONLY, DESIGN_LIMIT, GAITS, HIT_CAP, HOLD_MAX, MATERIALS, PER_SECOND_CAP, SLOTS, SOUNDS, type ArenaSetting, type Gait, type Look } from '../protocol'
 import { DOCTOR_MASS } from '../sim/forces'
 import { FLOP, MAX_SIGHTS_PER_SOURCE } from '../sim/sim'
+import { TONE_NAMES } from './voice'
 
 export type Schema = Record<string, unknown>
 
 const str = (description: string): Schema => ({ type: 'string', description })
+
+/** Written just before a model's code, so the model is built from the real form: it streams in 1 to 2 s. */
+const FORM = str('Before the model code: in a sentence or two, the real form of what you will model: its main masses and how they join, what is round, curved, tapered or thin, where its edges are soft and where sharp, its proportions.')
 
 export const MODEL_DOC = `MODEL CODE: the body of  function (m) { ... }  It builds a model out of shapes. Metres, y up.
 Every shape takes opts { at: [x, y, z] (its centre), rot: [rx, ry, rz] (radians, applied x then y then z), scale: [sx, sy, sz], color: '#rrggbb' or a CSS colour name, glow: true (lit by itself) }.
@@ -21,12 +25,12 @@ Every shape takes opts { at: [x, y, z] (its centre), rot: [rx, ry, rz] (radians,
   m.cylinder(rTop, rBottom, h, opts)     upright along y, centred on at; rTop 0 is a cone.   m.cone(r, h, opts)
   m.torus(r, tube, opts)                 a ring in the x-y plane, its hole along z
   m.capsule(r, length, opts)             upright, round ends
-  m.lathe([[r, y], ...], opts)           a round shape turned round the y axis through the points
+  m.lathe([[r, y], ...], opts)           a round shape turned all the way round the y axis through the points
   m.extrude([[x, y], ...], depth, opts)  a flat outline in x-y made depth thick along z
   m.tube([[x, y, z], ...], r, opts)      a bendy tube through the points
   m.part(name, { at, rot }, () => { ... })   shapes made inside belong to a named part pivoting at at (their coordinates are from the pivot); code turns it with me.pose(name, [rx, ry, rz])
   m.anchor(name, [x, y, z])              a named point
-At most 400 shapes. It is drawn low-poly and flat-shaded.`
+At most 400 shapes. Each is drawn as given and smoothly lit: a round shape with about a dozen sides round (a tube six), while a model's box, the ends of a cylinder and an outline made thick, at its rim and between its points, keep sharp edges, and where shapes meet nothing is blended. Seen from within, a shape can be invisible, so a surface seen from within needs a thickness of its own. Model the real form in its true proportions: round where it is round, curved where it curves, thin parts thin, and edges as soft or as sharp as the real ones, a soft edge rounded into the outline or profile. Make each form with the shape that makes it, a curve with enough points to look smooth; a box only for what really is a block.`
 
 export const THING_DOC = `THING CODE: the body of  function (me, w) { ... }
 It runs once, when the thing comes out of its crate. Keep whatever it remembers in your own variables, then return its handlers, any of:
@@ -61,16 +65,16 @@ w:
   w.doctors()            every doctor;  w.others(), the ones still in except the holder;  w.doctor(id)
   w.ray(from, dir, max = 100)   the first thing a line meets, leaving out the holder and the thing's own bodies: { dist, point, normal, doctor, body, arena } or null
   w.near(at, radius)     { doctors, bodies } within the radius
-  w.hurt(doctor, amount, { push, from })   takes credibility and returns what it took. push: metres a second away from \`from\` (default: the holder), or a vector [x, y, z]
+  w.hurt(doctor, amount, { push, from })   takes credibility and returns what it took (0 or less takes none and gives none back). push: metres a second away from \`from\` (default: the holder), or a vector [x, y, z]
   w.push(doctor or body, [x, y, z])        adds speed. A doctor knocked at ${FLOP} m/s or more is knocked flat: they tumble as a ragdoll and get up when they come to rest.
-  w.topple(doctor, [x, y, z])   knocks them flat at any speed, thrown at that velocity (within 1.5 s of getting up, only pushed)
+  w.topple(doctor, [x, y, z])   knocks them flat at any speed, thrown at that velocity (within 1.5 s of getting up, or after shaking a hold off, only pushed)
   w.blast(at, radius, speed)    throws everyone and everything within radius away from at (doctors, bodies, loose things; not the holder): speed m/s at the middle, falling to nothing at the edge, lighter bodies flying faster; the arena shelters what is behind it, and what of the arena can break, it strikes. Returns [{ doctor, strength 0..1 }] for the doctors it reached; it takes no credibility by itself.
   w.field({ at, radius, follow, secs, pull, swirl, lift, wind, drag })   a space that keeps moving whatever is inside it (doctors, bodies, loose things; not the holder), each in m/s²: pull toward its middle (below 0 pushes out), swirl round it, lift up (over 20 lifts a doctor off their feet), wind a push [x, y, z], drag slows. follow as a zone's, or a doctor. secs 5, at most 30. Returns { set(spec), alive(), remove() }.
   w.tie(a, b, { length, spring, secs, color, width })   a rope between two of: a doctor (at their chest), a body, me (the hand that holds it, so it pulls the holder), or a point [x, y, z]. It never lets them get further apart than length (the distance now, by default); spring 0..1 makes it pull and push back toward its length, softly to stiffly. The heavier end moves less. Drawn sagging when slack, in color and width (color false: not drawn). secs 10, at most 30. Returns { length(), setLength(l), distance() (how far apart its ends are now), alive(), remove() }.
   w.affect(doctor, { speed, jump, gravity, size, slip, reverse, hands, blind, tint, shake, glow, wear }, secs)   changes a doctor for up to 15 s: speed, jump, gravity and size multiply (1 is normal; speed 0 and jump 0 keep them where they stand), slip 0..1, reverse swaps their keys, hands false keeps them from using, picking up or throwing anything, blind 0..1 covers their own view in tint (a colour; dark unless given), 1 seeing nothing;
       and how they look meanwhile: shake 0..1 makes them tremble (1 convulses), glow lights them in a colour, wear is a model (made with w.model) drawn on them, built round a doctor standing with their feet at the origin and facing +z.
-      A doctor held (speed under 0.25, hands false, blind 0.7 or more, pulled by a rope, or in a field they cannot walk against) for ${HOLD_MAX} s in a row shakes it off: their holds end, ropes and fields let go of them, and no new hold takes for ${HOLD_REST} s.
-  w.held(doctor)         whether they are held now
+      A doctor held (speed under 0.25, hands false, blind 0.7 or more, pulled by a rope, in a field they cannot walk against, or lying knocked flat) for ${HOLD_MAX} s, less the time they were free between, shakes it off: their holds end, ropes and fields let go of them, and for ${HOLD_MAX} s no new hold takes and nothing knocks them flat.
+  w.held(doctor)         whether they are held now, in any of those ways (lying knocked flat too)
   w.teleport(doctor, [x, y, z])
   w.curse(doctor, words, uses = 1)   a curse on that doctor's next request(s): an instruction to whoever reads their words before designing. It shows on their screen.
   w.model(name, m => { ... })        another model (model code), made once, for spawn, show, wear and disguise; returns the name. At most 24.
@@ -80,6 +84,7 @@ w:
       gravity 1 is normal and 0 floats; drag slows it as it flies; face true keeps its +z pointing where it flies; trail the colour of the smoke it leaves behind as it goes, only for what burns as it flies (a rocket, a lit bomb, a fireball), never for what is just thrown or shot; life in seconds (5 by default, at most 20); solid false passes through everything and still reports what it touches; fixed true stays put; hidden true is not drawn (seen only through what is shown with it).
       hit(target, body) when it touches something: target { doctor, body, arena, thing, crate, point (where it was), speed, vel (its velocity as it came in) }; it goes on (bouncing, or through when not solid) until the code removes it.
       Returns a body { id, age(), pos(), vel(), setVel(v), push(v), setPos(p), resize(k), pose(part, [rx, ry, rz]), stick(target), unstick(), alive(), remove() }: age is seconds since it was spawned; resize(k) makes it k times the size it was spawned at (not k times its present size), as drawn and as it collides; pose turns a named part of its model; stick fixes it to what it hit (the target hit gets, or a doctor or a body), going and turning with them and passing through what it touches meanwhile, or with nothing given, where it is; unstick lets it go again. At most 40 of a thing's bodies at once.
+      A body, like me, w and every other handle they return (sights, zones, fields, ropes), is frozen: code keeps its own state in its own variables, never as new fields on a handle.
   w.zone({ at, radius or size [x, y, z], follow, secs }, { enter(doctor, dt), stay(doctor, dt), exit(doctor, dt) })   a space that notices doctors.
       follow 'holder': at is then [right, up, ahead] from the holder's feet and turns with them (the holder is never inside it); follow a body: at is from the body. Returns { remove() }.
   w.show(model, { at, rot, face, up, scale, grow, vel, spin, secs, fade, opacity, light, follow, tick(sight, dt) })   shows a model made with w.model for a while, only to be seen: it touches nothing and is not a body. At most ${MAX_SIGHTS_PER_SOURCE} of a thing's at once.
@@ -121,7 +126,7 @@ A doctor who falls below the arena loses 10 and comes back at a spawn point. A s
 
 export const THING_SYSTEM = `You design things for Dissertation, a silly first-person brawl for adults in a web browser. The players are mad doctors defending their theses, literally: each has 100 credibility, harm takes it away, and at 0 a doctor is out of the round. The last one standing wins the round.
 
-A player has asked for a thing in their own words, or pressed the button for one nobody has ever had. It comes down in a crate while you work, and whoever opens the crate first gets it. Make what was asked for, whatever it is, as far as it could remotely be possible: what it looks like, what it does when used, what it does to the world and to people, and how much credibility it takes, if any.
+A player has asked for a thing in their own words, or pressed the button for one nobody has ever had. It comes down in a crate while you work: once it is ready, its asker alone may open it for ${CRATE_OWNER_ONLY} s, then whoever opens it first gets it. Make what was asked for, whatever it is, as far as it could remotely be possible: what it looks like, what it does when used, what it does to the world and to people, and how much credibility it takes, if any.
 
 Where the words name something clearly, make that very thing, doing all a player would expect of it from films and games, every movement and effect of it shown as it happens, and moving as real things move, with weight, momentum and the world's pull. Where the words leave room, take the reading nobody expects. When the asker's words are under a curse, follow the curse's instruction on them before reading them.
 
@@ -142,6 +147,7 @@ export interface ThingAnswer {
   name: string
   description: string
   budget: number
+  form: string
   look: string
   code: string
 }
@@ -152,17 +158,19 @@ export const THING_SCHEMA: Schema = {
     name: str('Its name, a few words.'),
     description: str('One line for the holder: what it is and how to use it.'),
     budget: { type: 'integer', enum: [...BUDGETS], description: `What it may take from one doctor in any ${BUDGET_WINDOW} s.` },
+    form: FORM,
     look: str('Model code: the body of function (m), no header.'),
     code: str('Thing code: the body of function (me, w), no header, returning the handlers.'),
   },
-  required: ['name', 'description', 'budget', 'look', 'code'],
+  required: ['name', 'description', 'budget', 'form', 'look', 'code'],
   additionalProperties: false,
 }
 
-export function thingMessage(req: { ask: string | null; by: string; curse: string | null; avoid: string[]; genie: boolean; fix: { answer: ThingAnswer; problems: string[] } | null }): string {
+export function thingMessage(req: { ask: string | null; by: string; curse: string | null; avoid: string[]; genie: boolean; aside: boolean; fix: { answer: ThingAnswer; problems: string[] } | null }): string {
   const parts: string[] = []
   if (req.ask === null) parts.push(`${req.by} pressed the button: invent a thing nobody has had before, unlike every one of these: ${req.avoid.join('; ') || '(none yet)'}.`)
   else parts.push(`${req.by} asks for: ${JSON.stringify(req.ask)}`)
+  if (req.ask === null && req.aside) parts.push('This one takes no credibility from anyone by itself: what it does changes the fight some other way.')
   if (req.ask !== null && req.genie) parts.push('This time be a genie: twist their words, even clear ones, mischievously and as far as they will bend, while still giving them something that works.')
   if (req.curse) parts.push(`A curse lies on ${req.by}'s words, to be followed first: ${JSON.stringify(req.curse)}`)
   if (req.fix) parts.push(`Your design failed its trial run:\n${req.fix.problems.map((p) => `- ${p}`).join('\n')}\nFix it. Your design was:\n${JSON.stringify(req.fix.answer, null, 1)}`)
@@ -190,7 +198,7 @@ export interface WearAnswer {
   build?: number
   gait?: Gait
   colors?: Partial<Record<'skin' | 'eyes' | 'coat' | 'shirt' | 'trousers' | 'shoes', string>>
-  parts: { slot: string; name: string; code: string }[]
+  parts: { slot: string; name: string; form: string; code: string }[]
   remove: string[]
 }
 
@@ -212,8 +220,8 @@ export const WEAR_SCHEMA: Schema = {
       description: 'New parts to wear, at most one per slot.',
       items: {
         type: 'object',
-        properties: { slot: { type: 'string', enum: [...SLOTS] }, name: str('Its name, a few words.'), code: str('Model code: the body of function (m), no header.') },
-        required: ['slot', 'name', 'code'],
+        properties: { slot: { type: 'string', enum: [...SLOTS] }, name: str('Its name, a few words.'), form: FORM, code: str('Model code: the body of function (m), no header.') },
+        required: ['slot', 'name', 'form', 'code'],
         additionalProperties: false,
       },
     },
@@ -245,7 +253,7 @@ Build a real place, as it truly is, never a box with things put in it: the shape
 
 Let the fight come from the place itself: its own levels and ways up and down, its corners to hide in and heights to look out from, its edges and drops, what of it breaks when struck hard (glass, crates, shelves, a thin wall over a way through), and its own machinery moving, pushing, lifting, launching, opening or hurting, fairly (the arena takes at most ${HIT_CAP} a hit and ${PER_SECOND_CAP} a second from a doctor, and nothing hurts within 3 m of a spawn point). As large as the place is, for a few minutes' brawl among up to eight: about 40 to 90 m along its longest side.
 
-Make it as rich in detail as a real place, never a set of plain blocks: every surface made of its material, the space furnished and ornamented with shaped pieces and decorations, worked down to small things, lit by lamps and glowing shapes, under its own sky. Nowhere in it should a player look and see a bare surface with nothing on it. Aim for 300 to 800 placed pieces in all, most of the code being detail; write small builder functions of your own and call them in loops, so repeated detail is cheap to write. It is drawn with textures, shadows, ambient occlusion and bloom. Give it the place's own short name.
+Make it as rich in detail as a real place, never a set of plain blocks: every surface made of its material, the space furnished and ornamented with pieces and decorations modelled in their real forms, worked down to small things, lit by lamps and glowing shapes, under its own sky. Nowhere in it should a player look and see a bare surface with nothing on it. Aim for 300 to 800 placed pieces in all, most of the code being detail; write small builder functions of your own and call them in loops, so repeated detail is cheap to write. It is drawn with textures, shadows, ambient occlusion and bloom. Give it the place's own short name.
 
 ${ARENA_DOC}
 
@@ -278,15 +286,45 @@ export function arenaMessage(req: { avoid: string[]; fix: { answer: ArenaAnswer;
 // ------------------------------------------------------------------------------ taunts and titles
 
 export const LINES_SYSTEM = {
-  taunt: `You write taunts for Dissertation, a silly brawl between mad doctors defending their theses. A taunt is one short sentence a doctor shouts at the others: pompous, obscure, old-fashioned and absurd, silly rather than hurtful, as if from a grand old professor of a forgotten century of scholarly quarrels. Every one different in shape and subject from the others and from any listed. Plain English, at most 14 words.`,
+  taunt: `You write taunts for Dissertation, a silly brawl between mad doctors defending their theses. A taunt is what a doctor shouts at the others in the middle of a fight: pompous, obscure, old-fashioned and absurd, silly rather than hurtful, as if from a grand old professor of a forgotten century of scholarly quarrels. It is short, at most 8 words in all, in plain English. Most are said in two phrases, each in a different tone, and some in one. Each phrase is words written as they are said aloud, never a noise spelled out, with its own punctuation, and has the tone that fits its words: plain; booming, a pronouncement, low and slow; indignant, affronted, higher and quicker; gloating, chuckling at the others; hushed, an aside; sniffy, haughty and drawn out. Each line does something different from the others and from any listed, in its shape as much as in its subject.`,
   title: `You write thesis titles for Dissertation, a silly brawl between mad doctors defending their theses. A title is long-winded, obscure, old-fashioned and absurd, as if from a forgotten century of scholarship; silly, never rude. Every one different in shape and subject from the others and from any listed. At most 16 words.`,
 } as const
 
-export const LINES_SCHEMA: Schema = {
-  type: 'object',
-  properties: { lines: { type: 'array', items: { type: 'string' } } },
-  required: ['lines'],
-  additionalProperties: false,
+export const LINES_SCHEMA: Record<'taunt' | 'title', Schema> = {
+  taunt: {
+    type: 'object',
+    properties: {
+      lines: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            phrases: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 2,
+              items: {
+                type: 'object',
+                properties: { text: str('The phrase as said.'), tone: { type: 'string', enum: [...TONE_NAMES] } },
+                required: ['text', 'tone'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['phrases'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['lines'],
+    additionalProperties: false,
+  },
+  title: {
+    type: 'object',
+    properties: { lines: { type: 'array', items: { type: 'string' } } },
+    required: ['lines'],
+    additionalProperties: false,
+  },
 }
 
 export function linesMessage(n: number, avoid: string[]): string {

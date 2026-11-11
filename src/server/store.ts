@@ -10,6 +10,7 @@ import path from 'node:path'
 
 import type { Slot } from '../protocol'
 import type { ThingDesign } from '../sim/things'
+import type { Phrase } from './voice'
 
 export interface WearDesign {
   id: string
@@ -32,17 +33,21 @@ export interface ArenaDesign {
   made: string
 }
 
-export interface LineStock {
-  /** Every line handed out, never again. */
+export interface LineStock<T> {
+  /** Every line handed out, never again, as read. */
   used: string[]
   /** Written and not yet handed out. */
-  ready: string[]
+  ready: T[]
 }
 
 export interface Lines {
-  taunts: LineStock
-  titles: LineStock
+  /** Each taunt as its phrases, each with its tone. */
+  taunts: LineStock<Phrase[]>
+  titles: LineStock<string>
 }
+
+/** A line as read: a title, or a taunt's phrases one after the other. */
+export const lineText = (line: string | Phrase[]): string => (typeof line === 'string' ? line : line.map((p) => p.text).join(' '))
 
 /** A file name and id: lowercase a-z, 0-9 and single dashes. */
 export function slug(s: string): string {
@@ -73,8 +78,17 @@ export class Store {
     this.readAll('things', this.things)
     this.readAll('wear', this.wear)
     this.readAll('arenas', this.arenas)
-    const lines = this.readJson<Lines>(path.join(dir, 'lines.json'))
-    if (lines) this.lines = lines
+    // Taunts were written as one string each until 2026-11-11, when they became phrases with
+    // tones: those not handed out yet are dropped (Haiku writes more); the used are kept.
+    const lines = this.readJson<Omit<Lines, 'taunts'> & { taunts: LineStock<Phrase[] | string> }>(path.join(dir, 'lines.json'))
+    if (lines) {
+      const ready = lines.taunts.ready.filter((l) => typeof l !== 'string')
+      this.lines = { taunts: { used: lines.taunts.used, ready }, titles: lines.titles }
+      if (ready.length < lines.taunts.ready.length) {
+        log(`lines.json: ${lines.taunts.ready.length - ready.length} taunts written as one string each dropped, to be written again as phrases`)
+        this.saveLines()
+      }
+    }
   }
 
   private readJson<T>(file: string): T | null {

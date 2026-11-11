@@ -36,6 +36,8 @@ import {
   SphereGeometry,
   Vector2,
   Vector3,
+  WebGLRenderTarget,
+  type Light,
   type Material,
   type Object3D,
   type PerspectiveCamera,
@@ -49,13 +51,15 @@ import type { Net } from '../net'
 import type { ArenaView, BodySnap, CrateSnap, DoctorSnap, Follow, GameEvent, MoverSnap, Prim, Quat, Snap, ThingSnap, TieEnd, Vec3 } from '../protocol'
 import { setListener, setOccluder, setRoom } from '../audio'
 import { bodyFall, cry, footstep, impact, landing, play, shatter, speak } from '../sounds'
+import { buildRecipe } from '../model/kit'
 import { ArenaScene } from './arena'
-import { DoctorMesh, Label } from './doctor'
+import { DoctorMesh, Label, fullTags, wrap } from './doctor'
 import { Effects, Trail } from './effects'
 import { boxUV, prepared, surface, surfaceMaps } from './materials'
 import { GLOW, GLOW_BASE, ModelInstance } from './models'
-import { PAINT_MODEL, harmonizedHex, paint } from './paint'
+import { PAINT_MODEL, harmonizedHex, paint, setEngraving } from './paint'
 import { hearingOf } from './hearing'
+import { LABEL_LAYER, VIEW_LAYER } from './post'
 import { Portraits } from './portrait'
 import { Sights, Ties } from './sights'
 import { lighting } from '../lighting'
@@ -64,6 +68,8 @@ import { LABEL_FONT } from '../fonts'
 /** How far in the past others are drawn, seconds. */
 const DELAY = 0.05
 const EYE = 1.55
+/** Seconds a mark at the screen's edge points to whoever hurt the player. */
+const HURT_MARK = 1.6
 
 const BOX = new BoxGeometry(1, 1, 1)
 /** The dust a broken piece of the arena raises, toward which its own colour is mixed. */
@@ -95,6 +101,20 @@ const CRATE_LINES = (() => {
 /** The sheet of light where a crate coming in turns solid. */
 const SCAN = new BoxGeometry(0.98, 0.012, 0.98)
 const COG = new ConeGeometry(0.25, 0.35, 6)
+/**
+ * A crate's words (a label 2.56 m by 0.64 m) sit just over its lid, below the eyes: a crate comes
+ * in in front of its asker, and its words stood at a head's height, over the asker's own name tag
+ * to whoever faced them. The cog that turns while it is being made floats over the words.
+ */
+const CRATE_LABEL_Y = 0.88
+const COG_Y = 1.45
+/** How many doctors a frame are looked for past what the arena draws, for their name tags (World.nameTags). */
+const SIGHTS_PER_FRAME = 2
+/** A made thing for the warm-up (World.warm): a painted box and a glowing ball. */
+const WARM_MODEL = buildRecipe((m) => {
+  m.box(0.2, 0.2, 0.2)
+  m.sphere(0.08, { at: [0, 0.2, 0], glow: true })
+}).recipe
 
 /** A crate as drawn: solid below `cut` (it comes in from the bottom up), a drawing in light above. */
 interface CrateDrawn {
@@ -169,6 +189,10 @@ interface DoctorView {
   thumpAt: number
   /** When it last cried out. */
   cryAt: number
+  /** Its credibility, for its name tag. */
+  cred: number
+  /** Whether it was in sight when last looked for (World.nameTags), and when that was. */
+  sight: { seen: boolean; at: number }
 }
 
 interface BodyView {
@@ -207,6 +231,9 @@ export class World {
   private downCam: Vector3 | null = null
   private readonly hemi = new HemisphereLight('#ffffff', '#444444', 0.9)
   private readonly sun = new DirectionalLight('#ffffff', 2.6)
+  /** One of everything a round brings in later, drawn before it: see warm. */
+  private warmth: { crate: CrateDrawn; doctor: DoctorMesh } | null = null
+  private warmPending = false
   /** The things in one's own hands, as drawn before the eyes: the left hand's, then the right's. */
   private readonly viewModels: ({ inst: ModelInstance; kind: string; id: string } | null)[] = [null, null]
   private ownPos: Vec3 | null = null
@@ -215,6 +242,8 @@ export class World {
   watching: string | null = null
   /** The player's own doctor as last drawn, for the HUD. */
   own: DoctorSnap | null = null
+  /** Who hurt the player lately (a player id), until when (page seconds): the HUD points to them. */
+  private readonly hurtBy = new Map<string, number>()
   private unsub: (() => void)[] = []
 
   constructor(
@@ -274,6 +303,7 @@ export class World {
       for (const w of d.wear.values()) w.dispose()
     }
     for (const vm of this.viewModels) vm?.inst.dispose()
+    this.dropWarmth()
   }
 
   /** Where the player hears from: their eyes, or the camera. */
@@ -300,6 +330,16 @@ export class World {
     const hearing = hearingOf(view, this.arena.bounds)
     setRoom(hearing.room)
     setOccluder(hearing.occluded)
+    // Every light is on the layers drawn in passes of their own (post.ts): one's own held things
+    // are lit as everything else is, by the same shaders, and every pass sees the same lights (three
+    // draws a frame's shadows with the lights the scene's last drawing saw, and a shadow's shader
+    // is made for as many lights as there were).
+    this.scene.traverse((o) => {
+      if (!(o as Light).isLight) return
+      o.layers.enable(VIEW_LAYER)
+      o.layers.enable(LABEL_LAYER)
+    })
+    this.warmPending = true
     this.scene.fog = new FogExp2(this.arena.horizon, 0.0022 + view.sky.fog * 0.016)
     this.hemi.color.set(view.sky.color).lerp(new Color('#ffffff'), 0.7)
     this.hemi.groundColor.set(view.sky.ground)
@@ -351,7 +391,7 @@ export class World {
         break
       }
       case 'text':
-        this.fx.floatText(e.at, e.text, e.color, now)
+        this.fx.floatText(e.at, e.text, e.color, now, null)
         break
       case 'sound':
         play(e.sound, e.pitch, e.at, e.volume ?? 1)
@@ -368,10 +408,12 @@ export class World {
         this.fx.burst(e.at, e.color, Math.min(1.4, 0.35 + e.size * 0.25), Math.min(60, 14 + Math.round(e.size * 14)), false, now)
         break
       case 'hit': {
-        this.fx.floatText(e.at, `-${e.amount}`, '#ff5a4a', now)
-        const own = e.victim === this.net.you
-        // A cry from whoever is hurt (not every blow of a flurry), in their own voice.
         const v = this.doctors.get(e.victim)
+        // Over the name tag (and a taunt's bubble), not through them.
+        if (v) this.fx.floatText(v.mesh.tagFoot(), `-${e.amount}`, '#ff5a4a', now, v.mesh.overhead())
+        const own = e.victim === this.net.you
+        if (own && e.by !== null && e.by !== 'committee' && e.by !== this.net.you) this.hurtBy.set(e.by, now + HURT_MARK)
+        // A cry from whoever is hurt (not every blow of a flurry), in their own voice.
         if (v && now - v.cryAt > 0.45) {
           v.cryAt = now
           cry(e.victim, own ? null : e.at, 'hurt')
@@ -380,6 +422,12 @@ export class World {
           play('hit-flesh', 1, null, 0.7)
           this.shake = Math.min(0.6, this.shake + e.amount / 25)
         }
+        break
+      }
+      case 'spent': {
+        // The referee says so over the doctor a thing has taken all it may from.
+        const v = this.doctors.get(e.victim)
+        if (v) this.fx.floatText(v.mesh.tagFoot(), 'spent', '#cfc6b2', now, v.mesh.overhead())
         break
       }
       case 'out':
@@ -407,8 +455,17 @@ export class World {
   private applyLighting(): void {
     const l = lighting()
     this.gl.toneMappingExposure = l.exposure
-    this.hemi.intensity = l.ambient
-    this.scene.environmentIntensity = l.reflections
+    // Under a roof, of the light from all round only the tab's share comes in. The engraving is
+    // judged against the light the place's lit parts have: the light from all round that comes in,
+    // and the sun as high as it is where it reaches (a place open over half its floor has sunlit
+    // floors and cast shadows as a courtyard has); its lines are the tab's points apart.
+    const sky = this.arena?.skyOpen ?? 1
+    const inside = l.indoor + (1 - l.indoor) * sky
+    this.hemi.intensity = l.ambient * inside
+    this.scene.environmentIntensity = l.reflections * inside
+    const round = l.ambient + l.reflections
+    const sun = l.sun * Math.sin((l.sunHeight * Math.PI) / 180)
+    setEngraving(Math.max(0.05, (round * inside + sun * Math.min(1, sky * 2)) / Math.max(0.05, round + sun)), l.hatchSpacing * this.gl.getPixelRatio())
     this.sun.intensity = l.sun
     const w = l.sunWarmth
     this.sun.color.copy(this.sunBase).lerp(w >= 0 ? WARM_SUN : COLD_SUN, Math.abs(w) * 0.6)
@@ -554,7 +611,7 @@ export class World {
     const crateSeen = new Set<string>()
     for (const cb of b.crates) {
       crateSeen.add(cb.id)
-      this.placeCrate(cb, cratesA.get(cb.id) ?? cb, k, now)
+      this.placeCrate(cb, cratesA.get(cb.id) ?? cb, k, now, br.t)
     }
     for (const [id, c] of this.crates) {
       if (!crateSeen.has(id)) {
@@ -568,12 +625,97 @@ export class World {
     this.placeCamera(cam, dt, now)
     // Sights and ties go with what is now placed, the camera too (a thing in one's own hand).
     this.camera.updateMatrixWorld()
+    this.nameTags(now)
+    if (this.warmPending) {
+      this.warmPending = false
+      this.warm(now)
+    }
     // The ear is the camera.
     const look = this.camera.getWorldDirection(new Vector3())
     const up = new Vector3(0, 1, 0).applyQuaternion(this.camera.getWorldQuaternion(new Quaternion()))
     setListener([this.camera.position.x, this.camera.position.y, this.camera.position.z], [look.x, look.y, look.z], [up.x, up.y, up.z])
     this.sights.update(now, this.objectOf, this.camera.position)
     this.ties.update(b.ties ?? [], this.tieEnd)
+  }
+
+  /**
+   * Each doctor's name tag from where the eye is now: shown while the doctor can be seen (their
+   * head or their middle, past what the arena has drawn: walls hide it, a balcony or a lintel over
+   * them does not), in full near or looked at, a pip in the player's colour otherwise. A taunt's
+   * bubble over it is shown while the doctor can be seen too (a dismissed one's included): the
+   * words are on the screen's foot as well, and walls hide who is where.
+   */
+  private nameTags(now: number): void {
+    const eye = this.camera.position
+    const drawn = [...this.doctors].filter(([, d]) => d.mesh.root.visible)
+    // Looked for a few doctors a frame, those looked for longest ago first (a line through a
+    // crowded arena costs a fraction of a millisecond).
+    const sight = this.arena!.sightlines
+    for (const [, d] of [...drawn].sort((a, b) => a[1].sight.at - b[1].sight.at).slice(0, SIGHTS_PER_FRAME)) {
+      d.sight.at = now
+      d.sight.seen = sight.clear(eye, d.mesh.head.getWorldPosition(new Vector3())) || sight.clear(eye, d.mesh.spine.getWorldPosition(new Vector3()))
+    }
+    const marks = new Map<string, Vector3>()
+    for (const [id, d] of drawn) {
+      d.mesh.bubble.sprite.visible = d.sight.seen && now <= d.mesh.bubbleUntil
+      // A tag the drawing shows (not a dismissed doctor's, nor under a disguise), while seen.
+      if (!d.mesh.tag.sprite.visible) continue
+      d.mesh.tag.sprite.visible = d.sight.seen
+      if (d.sight.seen) marks.set(id, d.mesh.root.position.clone().add(new Vector3(0, 1.2 * d.mesh.root.scale.y, 0)))
+    }
+    const full = fullTags(this.camera.position, this.camera.getWorldDirection(new Vector3()), marks)
+    for (const [id, d] of this.doctors) {
+      const info = this.net.player(id)
+      d.mesh.label(info?.name ?? '', info?.color ?? '#ffffff', d.cred, full.has(id))
+    }
+  }
+
+  /**
+   * Draws one of everything a round brings in later (a crate coming in, a doctor and its name tag,
+   * a made thing, a fading sight, fire, bits, a beam, a floating number) once, into a pixel of its
+   * own, with this arena's lamps, so their shaders are made now, in the countdown, not on the frame
+   * a crate lands or something first goes off. They are kept until the round ends: a shader is let
+   * go of with the last thing drawn in it, and was made again for the next.
+   */
+  private warm(now: number): void {
+    this.dropWarmth()
+    // A crate coming in, made as every crate is, taken out of the round's own.
+    const snap: CrateSnap = { id: 'warm', p: [0, 0, 0], owner: '', state: 'arriving', arrived: 0.5, ask: null, archive: false, ownerUntil: null }
+    this.placeCrate(snap, snap, 1, now, 0)
+    const crate = this.crates.get(snap.id)!
+    this.crates.delete(snap.id)
+    crate.cog.visible = true
+    // A doctor too, for a countdown with nobody in sight (a plain body is drawn as a doctor is).
+    const doctor = new DoctorMesh()
+    doctor.label('', '#ffffff', 100, true)
+    this.warmth = { crate, doctor }
+    const group = new Group()
+    group.add(crate.group, doctor.root, new ModelInstance(WARM_MODEL).root, this.sights.warm(WARM_MODEL), this.fx.warm())
+    group.position.copy(this.camera.localToWorld(new Vector3(0, 0, -3)))
+    const target = new WebGLRenderTarget(1, 1)
+    const was = this.gl.getRenderTarget()
+    this.gl.setRenderTarget(target)
+    // The arena first, alone: three.js draws the sun's shadows with the lights the drawing before
+    // found, and a crate's shadow is a shader of its own, made for as many lights as there were.
+    this.gl.render(this.scene, this.camera)
+    this.scene.add(group)
+    this.gl.render(this.scene, this.camera)
+    // The labels as their own pass draws them (post.ts), alone.
+    const layers = this.camera.layers.mask
+    this.camera.layers.set(LABEL_LAYER)
+    this.gl.render(this.scene, this.camera)
+    this.camera.layers.mask = layers
+    this.gl.setRenderTarget(was)
+    target.dispose()
+    group.removeFromParent()
+  }
+
+  private dropWarmth(): void {
+    if (!this.warmth) return
+    this.warmth.crate.label.dispose()
+    for (const m of this.warmth.crate.mats) m.dispose()
+    this.warmth.doctor.dispose()
+    this.warmth = null
   }
 
   /** What a sight or a tie goes with, as drawn: the player's own held thing is the one before their eyes. */
@@ -611,7 +753,7 @@ export class World {
     const info = this.net.player(db.id)
     let v = this.doctors.get(db.id)
     if (!v) {
-      v = { mesh: new DoctorMesh(), last: p, vel: [0, 0, 0], disguise: null, wear: new Map(), heard: { steps: 0, lands: 0, jumps: 0 }, ragWas: null, ragSpeed: 0, thumpAt: -10, cryAt: -10 }
+      v = { mesh: new DoctorMesh(), last: p, vel: [0, 0, 0], disguise: null, wear: new Map(), heard: { steps: 0, lands: 0, jumps: 0 }, ragWas: null, ragSpeed: 0, thumpAt: -10, cryAt: -10, cred: db.cred, sight: { seen: false, at: -Infinity } }
       this.root.add(v.mesh.root)
       this.doctors.set(db.id, v)
     }
@@ -626,6 +768,7 @@ export class World {
       }
     }
     v.last = p
+    v.cred = db.cred
     v.mesh.root.position.set(...p)
     // Knocked flat or dismissed: the game's ragdoll, drawn as it lies (between two snapshots); the
     // player's own doctor too, seen from behind while they are down.
@@ -650,13 +793,11 @@ export class World {
       v.ragWas = at
       v.mesh.root.visible = true
       v.mesh.tag.sprite.visible = db.alive && !own
-      v.mesh.label(info?.name ?? '', info?.color ?? '#ffffff', db.cred)
       return
     }
     v.ragWas = null
     v.ragSpeed = 0
     v.mesh.root.visible = db.alive && !own
-    v.mesh.label(info?.name ?? '', info?.color ?? '#ffffff', db.cred)
     // A disguise: the model instead of the doctor.
     const disguise = db.disguise ? this.net.models.get(db.disguise) : undefined
     if (disguise && v.disguise?.recipe !== disguise) {
@@ -793,7 +934,8 @@ export class World {
     x.trail?.at(p)
   }
 
-  private placeCrate(cb: CrateSnap, ca: CrateSnap, k: number, now: number): void {
+  /** A crate as drawn at the server time t, its label saying whose it is and what they asked for, then whom it waits for, then that E opens it. */
+  private placeCrate(cb: CrateSnap, ca: CrateSnap, k: number, now: number, t: number): void {
     let c = this.crates.get(cb.id)
     const owner = this.net.player(cb.owner)
     if (!c) {
@@ -826,9 +968,9 @@ export class World {
       const scanMat = new MeshBasicMaterial({ color: '#8fd0ff', transparent: true, opacity: 0, depthWrite: false, blending: AdditiveBlending })
       const scan = new Mesh(SCAN, scanMat)
       const cog = new Mesh(COG, glowMat('#ffd27a'))
-      cog.position.y = 1.0
-      const label = new Label(320, 64, 1.6)
-      label.sprite.position.y = 1.45
+      cog.position.y = COG_Y
+      const label = new Label(512, 128, 2.56)
+      label.sprite.position.y = CRATE_LABEL_Y
       group.add(box, band, wire, fill, scan, cog, label.sprite)
       this.root.add(group)
       c = { group, cog, box, label, state: '', cut, above, wire, fill, scan, mats: [box.material as Material, band.material as Material, bracketMat, wireMat, fillMat, scanMat] }
@@ -854,20 +996,39 @@ export class World {
     c.above.constant = -cutY
     c.cog.visible = cb.state === 'waiting'
     c.cog.rotation.y = now * 3
-    c.cog.position.y = 1.0 + Math.sin(now * 4) * 0.08
+    c.cog.position.y = COG_Y + Math.sin(now * 4) * 0.08
     const m = c.box.material as MeshStandardMaterial
     m.emissive.setRGB(cb.state === 'ready' ? 0.35 + Math.sin(now * 6) * 0.2 : 0, cb.state === 'ready' ? 0.25 + Math.sin(now * 6) * 0.15 : 0, 0)
-    const text = cb.state === 'ready' ? 'Open it: E' : cb.state === 'waiting' ? 'Under review' : `For ${owner?.name ?? 'someone'}`
+    // Coming in and being made: the asker and their words (a bot's, and a random one without the
+    // models, come from the archive at once: not something new); ready, whom it waits for (in the
+    // countdown, when nobody may open it, to all; in a live round, to anyone else for its first
+    // seconds, counted), then E.
+    const who = owner?.name ?? 'someone'
+    const mine = cb.owner === this.net.you
+    const wait = mine || cb.ownerUntil === null ? 0 : Math.ceil(cb.ownerUntil - t)
+    const open = cb.state === 'ready' && cb.ownerUntil !== null && (mine || wait <= 0)
+    const asked = cb.ask !== null ? `“${cb.ask}”` : cb.archive ? 'from the archive' : 'something new'
+    const text = cb.state !== 'ready' ? `${who}: ${asked}` : open ? 'Open it: E' : wait > 0 ? `For ${who}: ${wait} s` : `For ${who}`
     if (c.state !== text) {
       c.state = text
-      c.label.draw(text, (g, w) => {
+      c.label.draw(text, (g, w, h) => {
         g.font = `600 30px ${LABEL_FONT}`
         g.textAlign = 'center'
         g.lineWidth = 6
         g.strokeStyle = 'rgba(20,10,5,0.85)'
-        g.strokeText(text, w / 2, 42)
-        g.fillStyle = cb.state === 'ready' ? '#ffd27a' : '#f4ecd8'
-        g.fillText(text, w / 2, 42)
+        g.fillStyle = open ? '#ffd27a' : '#f4ecd8'
+        // At most two lines: the words cut short where the second is full.
+        const lines = wrap(g, text, w - 24)
+        if (lines.length > 2) {
+          let last = lines[1]!
+          while (g.measureText(`${last}…”`).width > w - 24 && last.includes(' ')) last = last.slice(0, last.lastIndexOf(' '))
+          lines.splice(1, lines.length - 1, `${last}…”`)
+        }
+        lines.forEach((line, i) => {
+          const y = h / 2 + 11 + (i - (lines.length - 1) / 2) * 38
+          g.strokeText(line, w / 2, y)
+          g.fillText(line, w / 2, y)
+        })
       })
     }
   }
@@ -911,6 +1072,27 @@ export class World {
     this.camera.lookAt(p.x, p.y + 1.4, p.z)
   }
 
+  /**
+   * Where those who hurt the player lately stand, seen from the view: each a turn from straight
+   * ahead (radians, clockwise seen from above) and how strongly to mark it (1 just now, fading).
+   */
+  attackers(): { turn: number; strength: number }[] {
+    const now = performance.now() / 1000
+    const f = this.camera.getWorldDirection(new Vector3()).setY(0).normalize()
+    const out: { turn: number; strength: number }[] = []
+    for (const [id, until] of this.hurtBy) {
+      const d = this.doctors.get(id)
+      if (until <= now || !d) {
+        this.hurtBy.delete(id)
+        continue
+      }
+      const dx = d.last[0] - this.camera.position.x
+      const dz = d.last[2] - this.camera.position.z
+      out.push({ turn: Math.atan2(dz * f.x - dx * f.z, dx * f.x + dz * f.z), strength: (until - now) / HURT_MARK })
+    }
+    return out
+  }
+
   /** Watches the next doctor still in. */
   watchNext(): void {
     const alive = [...this.doctors.entries()].filter(([id, d]) => id !== this.net.you && d.mesh.root.visible).map(([id]) => id)
@@ -934,6 +1116,9 @@ export class World {
       if (!vm || vm.kind !== held.kind) {
         vm?.inst.dispose()
         vm = { inst: new ModelInstance(recipe), kind: held.kind, id: held.id }
+        // Drawn over the world in a pass of their own (post.ts), casting no shadow from before the face.
+        vm.inst.root.traverse((o) => o.layers.set(VIEW_LAYER))
+        for (const m of vm.inst.meshes) m.castShadow = false
         this.camera.add(vm.inst.root)
         vm.inst.root.position.set(h === 1 ? 0.28 : -0.28, -0.3, -0.55)
         vm.inst.root.rotation.set(0, Math.PI, 0)
