@@ -8,8 +8,9 @@
  * page the dossier (the name, needed; the thesis, which the committee writes when it is left
  * empty; the voice, their own or one of Kokoro's by name; what they bring to their defence, made
  * once they are Ready; a line to say how the doctor looks, which Opus makes; height, build, walk
- * and colours; the wardrobe of every part anyone has had made). Along the foot: when the round
- * starts, the wins the match needs, Taunt and Ready.
+ * and colours; the wardrobe of every part anyone has had made). The committee page also offers
+ * the last round's winner the next arena, and keeps the record of every match played here. Along
+ * the foot: when the round starts, the wins the match needs, Taunt and Ready.
  */
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
@@ -18,7 +19,7 @@ import { BoxGeometry, Color, CylinderGeometry, Euler, Matrix4, Mesh, PMREMGenera
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 
 import type { Net } from './net'
-import { BUDGET_WINDOW, CRATE_OWNER_ONLY, FISTS_BUDGET, GAITS, MATCH_WINS, SLOTS, VOICES, type Gait, type Lobby, type Look, type PlayerInfo, type Profile, type Slot, type VoiceName } from './protocol'
+import { BUDGET_WINDOW, CRATE_CLAIM, CRATE_OWNER_ONLY, FALL_DAMAGE, FISTS_BUDGET, GAITS, MATCH_WINS, SLOTS, VOICES, type Gait, type Lobby, type Look, type PlayerInfo, type Profile, type Slot, type VoiceName } from './protocol'
 import { DoctorMesh } from './scene/doctor'
 import { prepared, surface } from './scene/materials'
 import { setEngraving } from './scene/paint'
@@ -42,6 +43,7 @@ const SLOT_NAMES: Record<Slot, string> = {
   hair: 'Hair',
   head: 'On the head',
   face: 'On the face',
+  clothes: 'Clothes',
   body: 'On the body',
   back: 'On the back',
   feet: 'On the feet',
@@ -267,7 +269,24 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
     play('ui', 1.3)
   }
 
-  const parts = [...net.wardrobe.values()].filter((p) => p.slot === slot)
+  /** A slot's parts to choose from, after the choice of none (its name: nothing, or for clothes the lab coat). */
+  const choices = (s: Slot, none: string) => (
+    <div className="parts">
+      <button className={!profile.look.worn[s] ? 'on nothing' : 'nothing'} onClick={() => wear(s, null)}>
+        {none}
+      </button>
+      {[...net.wardrobe.values()]
+        .filter((p) => p.slot === s)
+        .map((p) => (
+          <button key={p.id} className={profile.look.worn[s] === p.id ? 'on' : ''} title={p.ask ? `${p.by}: “${p.ask}”` : 'The game’s own'} onClick={() => wear(s, p.id)}>
+            <span>
+              {p.name}
+              <small>{p.by ? `by ${p.by}` : 'the game’s own'}</small>
+            </span>
+          </button>
+        ))}
+    </div>
+  )
   const humans = lobby.players.filter((p) => !p.bot)
   const note = net.note && net.note.until > performance.now() ? net.note.text : null
   const arena = lobby.arena
@@ -340,6 +359,18 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
           </div>
 
           <h3>The next arena</h3>
+          {lobby.choice && (
+            <div className="arena-choice">
+              {lobby.choice.by === net.you ? 'You won the round: choose where the next defence is held.' : `${net.name(lobby.choice.by)} won the round and chooses where the next defence is held.`}
+              <div className="choices">
+                {lobby.choice.options.map((o) => (
+                  <button key={o.id} className={`small ${lobby.choice!.chosen === o.id ? 'on' : ''}`} disabled={lobby.choice!.by !== net.you} onClick={() => net.send({ type: 'chooseArena', id: o.id })}>
+                    {o.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="arena-status">
             {arena.state === 'ready' ? (
               <b>{arena.name}</b>
@@ -363,6 +394,37 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
                   <b>{t.who}:</b> “{t.text}”
                 </div>
               ))}
+            </>
+          )}
+
+          {lobby.record.length > 0 && (
+            <>
+              <h3>The faculty record</h3>
+              <table className="record">
+                <thead>
+                  <tr>
+                    <th>Doctor</th>
+                    <th title="Doctorates awarded">Doct.</th>
+                    <th title="Rounds won">Rounds</th>
+                    <th title="Doctors dismissed (of them, the match's leader)">Dismissed</th>
+                    <th title="Matches played">Matches</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lobby.record.map((r, i) => (
+                    <tr key={i} className={r.here ? 'here' : ''}>
+                      <td>{r.name}</td>
+                      <td>{r.doctorates}</td>
+                      <td>{r.rounds}</td>
+                      <td>
+                        {r.dismissals}
+                        {r.leaders > 0 && <small> ({r.leaders}★)</small>}
+                      </td>
+                      <td>{r.matches}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </>
           )}
 
@@ -454,13 +516,13 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
           <div className="rules">
             <p>What you bring waits in a crate beside you as the round begins.</p>
             <p>
-              <kbd>T</kbd> asks for anything, <kbd>R</kbd> for something nobody has had: a crate comes with your name on it, yours alone for {CRATE_OWNER_ONLY} s once ready, then anyone's.
+              <kbd>T</kbd> asks for anything, <kbd>R</kbd> for something nobody has had: a crate comes with your name on it, yours alone for {CRATE_OWNER_ONLY} s once ready, then anyone's. Left {CRATE_CLAIM} s, it no longer holds your next request back. The committee drops brass-banded crates from the archive for anyone.
             </p>
             <p>
               <kbd>E</kbd> opens it, and each mouse button works its own hand. An empty hand shoves, at most {FISTS_BUDGET} from each in {BUDGET_WINDOW} s.
             </p>
             <p>Every thing has its own count of uses and is gone when they are spent. Nothing comes twice in a match: words asking for a thing had already become something else.</p>
-            <p>Dismissed, you may review a player you watch (not a bot), once a round: it bends their next request. The last doctor standing wins the round.</p>
+            <p>Dismissed, you may review a player you watch (not a bot), once a round: it bends their next request. The last doctor standing wins the round, and chooses the next arena. Stuck? Hold <kbd>K</kbd>: back to a spawn point, for {FALL_DAMAGE}.</p>
           </div>
 
           {lobby.join.length > 0 && humans.length < 8 && (
@@ -576,27 +638,18 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
             ))}
           </div>
 
+          <h3>Clothes</h3>
+          {choices('clothes', 'Lab coat')}
+
           <h3>Wardrobe</h3>
           <div className="slots">
-            {SLOTS.map((s) => (
+            {SLOTS.filter((s) => s !== 'clothes').map((s) => (
               <button key={s} className={s === slot ? 'on' : ''} onClick={() => setSlot(s)}>
                 {SLOT_NAMES[s]}
               </button>
             ))}
           </div>
-          <div className="parts">
-            <button className={!profile.look.worn[slot] ? 'on nothing' : 'nothing'} onClick={() => wear(slot, null)}>
-              Nothing
-            </button>
-            {parts.map((p) => (
-              <button key={p.id} className={profile.look.worn[slot] === p.id ? 'on' : ''} title={p.ask ? `${p.by}: “${p.ask}”` : 'The game’s own'} onClick={() => wear(slot, p.id)}>
-                <span>
-                  {p.name}
-                  <small>{p.by ? `by ${p.by}` : 'the game’s own'}</small>
-                </span>
-              </button>
-            ))}
-          </div>
+          {choices(slot, 'Nothing')}
         </div>
       </section>
 

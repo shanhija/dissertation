@@ -302,7 +302,9 @@ export function worldApi(sim: Sim, owner: string, source: () => Source, holder: 
       if (!d) return 0
       const o = (opts !== null && typeof opts === 'object' ? opts : {}) as { push?: unknown; from?: unknown }
       const from = finiteVec(o.from) ?? holder()?.pos ?? null
-      const dealt = sim.harm(d, numOr(amount, 0), source())
+      const src = source()
+      if (src.thing) sim.tried(src.thing, d, src.attacker, numOr(amount, 0))
+      const dealt = sim.harm(d, numOr(amount, 0), src)
       const pushV = finiteVec(o.push)
       if (pushV) sim.knock(d, pushV)
       else if (typeof o.push === 'number' && Number.isFinite(o.push) && from) {

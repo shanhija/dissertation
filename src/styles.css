@@ -841,6 +841,51 @@ kbd {
   font: 400 22px var(--display-lc);
 }
 
+/* The last round's winner chooses the next arena. */
+.arena-choice {
+  margin-bottom: 10px;
+  font: italic 400 18px/1.3 var(--body);
+}
+
+.arena-choice .choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  font-style: normal;
+}
+
+/* The record of every match played here. */
+.record {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 17px;
+}
+
+.record th {
+  font: 400 15px var(--display);
+  color: var(--ink-2);
+  text-align: right;
+  border-bottom: 1px solid var(--rule);
+}
+
+.record th:first-child,
+.record td:first-child {
+  text-align: left;
+}
+
+.record td {
+  padding: 3px 4px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid rgba(155, 122, 72, 0.25);
+}
+
+.record tr.here td {
+  font-weight: 600;
+  color: var(--ink);
+}
+
 /* The arena being built: how far along, against the time it nearly always takes; past it, the bar breathes. */
 .arena-build {
   height: 12px;
@@ -1240,16 +1285,217 @@ kbd {
   color: var(--gilt);
 }
 
-/* Its uses left, beside its name; red near the end. */
-.held-left {
-  margin-left: 10px;
-  font: 600 15px var(--body);
-  color: var(--text-lt-2);
+/* The name, and its uses left large at its side (2026-11-14: the uses were lost among the words). */
+.held-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.held-uses {
+  flex: none;
+  text-align: right;
+  color: var(--text-lt);
   white-space: nowrap;
 }
 
-.held-left.low {
+.held-uses b {
+  font: 400 40px/0.95 var(--display);
+  font-variant-numeric: tabular-nums;
+  color: var(--gilt);
+}
+
+.held-uses span {
+  font: 600 16px var(--body);
+  color: var(--text-lt-2);
+}
+
+.held-uses.low b {
   color: var(--red-lt);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.held-uses .pips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px;
+  max-width: 96px;
+  margin-top: 4px;
+}
+
+.held-uses .pips i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--gilt-2);
+}
+
+.held-uses .pips i.on {
+  background: var(--gilt);
+}
+
+.held-uses.low .pips i.on {
+  background: var(--red-lt);
+}
+
+/* What its buttons do, in a few words each. */
+.held-acts {
+  margin: 6px 0 6px;
+  font: 400 18px/1.35 var(--body);
+  color: var(--text-lt);
+}
+
+.held-acts kbd {
+  font-size: 13px;
+}
+
+/* Each hand's uses left beside the crosshair, on its side. */
+.ammo {
+  position: absolute;
+  top: 50%;
+  margin-top: -14px;
+  font: 600 22px/28px var(--body);
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 240, 210, 0.9);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+}
+
+.ammo.left {
+  right: calc(50% + 22px);
+}
+
+.ammo.right {
+  left: calc(50% + 22px);
+}
+
+.ammo.low {
+  color: var(--red-lt);
+}
+
+/* K held: how far toward the spawn point. */
+.withdraw {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 96px);
+  transform: translateX(-50%);
+  padding: 6px 16px 8px;
+  font: italic 400 19px var(--body);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.withdraw .bar {
+  height: 6px;
+  margin-top: 6px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.withdraw .bar i {
+  display: block;
+  height: 100%;
+  background: var(--gilt);
+}
+
+/* The match at a glance, at the top left (the patience is in the middle, the feed on the right). */
+.match-strip {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 14px 6px;
+  font: 400 17px var(--body);
+  pointer-events: none;
+}
+
+.match-strip .to {
+  font: 400 16px var(--display);
+  color: var(--text-lt-2);
+}
+
+.match-strip .who {
+  white-space: nowrap;
+}
+
+.match-strip .who.you {
+  color: var(--gilt);
+}
+
+.match-strip .dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 5px;
+  border-radius: 50%;
+}
+
+.match-strip .lead,
+.scores .lead {
+  color: #f2c94c;
+  margin-right: 3px;
+}
+
+.match-strip .pips {
+  margin-left: 6px;
+}
+
+.match-strip .pips i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 2px;
+  border-radius: 50%;
+  border: 1px solid var(--gilt-2);
+  vertical-align: 0.1em;
+}
+
+.match-strip .pips i.on {
+  background: var(--gilt);
+}
+
+/* The player's own crates, through walls; at the screen's edge with an arrow when out of view. */
+.crate-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.crate-mark {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.crate-mark i {
+  width: 16px;
+  height: 16px;
+  background: rgba(127, 200, 255, 0.85);
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.9));
+}
+
+.crate-mark.off i {
+  width: 22px;
+  clip-path: polygon(0 15%, 100% 50%, 0 85%, 22% 50%);
+}
+
+.crate-mark[data-state='ready'] i {
+  background: #ffd27a;
+}
+
+.crate-mark span {
+  margin-top: 3px;
+  font: 600 15px var(--body);
+  white-space: nowrap;
+  color: var(--text-lt);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
 }
 
 .held-desc {
@@ -1449,10 +1695,24 @@ kbd {
   box-shadow: 0 0 0 1.5px rgba(60, 40, 20, 0.55);
 }
 
-.scores td.title {
+.scores td .title {
   font-style: italic;
-  font-size: 17px;
+  font-weight: 400;
+  font-size: 15px;
+  white-space: normal;
   color: var(--ink-2);
+}
+
+.scores td.best {
+  font-size: 16px;
+  font-style: italic;
+  color: var(--ink-2);
+}
+
+.scores .who-whom {
+  margin: 12px 0 0;
+  font-size: 17px;
+  line-height: 1.4;
 }
 
 .scores td.num {

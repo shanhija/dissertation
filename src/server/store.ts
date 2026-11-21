@@ -1,7 +1,8 @@
 /**
  * The library on disk, kept between runs: one pretty-printed JSON file per thing, worn part and
  * arena (`things/`, `wear/`, `arenas/`), every taunt (in the style written now) and thesis title
- * ever handed out with the ones ready to go (`lines.json`), and `log.jsonl` (git-ignored) with
+ * ever handed out with the ones ready to go (`lines.json`), every player's record over the matches
+ * played here, by their browser's key (`record.json`), and `log.jsonl` (git-ignored) with
  * every request and how it went, every taunt said among them. Only the dev server writes it.
  * Reading skips a file it cannot parse, and says so.
  */
@@ -9,7 +10,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import type { Slot } from '../protocol'
+import type { Cover, Slot } from '../protocol'
 import type { ThingDesign } from '../sim/things'
 import { TAUNT_STYLE } from './prompts'
 import type { Phrase } from './voice'
@@ -18,6 +19,8 @@ export interface WearDesign {
   id: string
   name: string
   slot: Slot
+  /** The doctor's own clothes it takes the place of. */
+  covers: Cover[]
   code: string
   ask: string
   by: string
@@ -48,6 +51,16 @@ export interface Lines {
   titles: LineStock<string>
 }
 
+/** A player's record over every match played on this computer (see RecordRow), kept by their browser's key. */
+export interface RecordEntry {
+  name: string
+  matches: number
+  doctorates: number
+  rounds: number
+  dismissals: number
+  leaders: number
+}
+
 /** A line as read: a title, or a taunt's phrases one after the other. */
 export const lineText = (line: string | Phrase[]): string => (typeof line === 'string' ? line : line.map((p) => p.text).join(' '))
 
@@ -71,6 +84,8 @@ export class Store {
   readonly wear = new Map<string, WearDesign>()
   readonly arenas = new Map<string, ArenaDesign>()
   lines: Lines = { taunts: { style: TAUNT_STYLE, used: [], ready: [] }, titles: { used: [], ready: [] } }
+  /** By browser key. */
+  record: Record<string, RecordEntry> = {}
 
   constructor(
     readonly dir: string,
@@ -83,6 +98,7 @@ export class Store {
     // Taunts in another style than TAUNT_STYLE are dropped once, ready and handed out alike, so
     // Haiku is never shown them; the titles stay. Those from before modern English (2026-11-11)
     // have no style, some not even phrases. Every taunt said is still in the log.
+    this.record = this.readJson<Record<string, RecordEntry>>(path.join(dir, 'record.json')) ?? {}
     const lines = this.readJson<Omit<Lines, 'taunts'> & { taunts: LineStock<Phrase[]> & { style?: string } }>(path.join(dir, 'lines.json'))
     if (lines) {
       const { style, used, ready } = lines.taunts
@@ -142,6 +158,14 @@ export class Store {
 
   saveLines(): void {
     fs.writeFileSync(path.join(this.dir, 'lines.json'), `${JSON.stringify(this.lines, null, 2)}\n`)
+  }
+
+  /** A player's record changed: add to it (a new key starts at nothing), under the name they play by now. */
+  addRecord(key: string, name: string, add: Partial<Omit<RecordEntry, 'name'>>): void {
+    const e = (this.record[key] ??= { name, matches: 0, doctorates: 0, rounds: 0, dismissals: 0, leaders: 0 })
+    e.name = name
+    for (const [k, v] of Object.entries(add) as [keyof Omit<RecordEntry, 'name'>, number][]) e[k] += v
+    fs.writeFileSync(path.join(this.dir, 'record.json'), `${JSON.stringify(this.record, null, 2)}\n`)
   }
 
   append(entry: Record<string, unknown>): void {

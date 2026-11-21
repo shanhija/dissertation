@@ -5,7 +5,7 @@
  * empty and no design is ready in time).
  */
 
-import { BUDGETS, USES, type Budget, type Vec3 } from '../protocol'
+import { BUDGETS, LIFE_HARM, USES, type Budget, type Vec3 } from '../protocol'
 import { recipeOf, thingApi } from './api'
 import { buildArena } from './arena'
 import { LECTURE_HALL } from './hall'
@@ -17,8 +17,11 @@ export interface ThingDesign {
   name: string
   /** One line the holder reads. */
   description: string
+  /** What a click does, and a shift-click, in a few words each for the hand card (shift empty: it has no other use). */
+  click: string
+  shift: string
   budget: Budget
-  /** Uses a new one has, USES[0] to USES[1], as its designer gave it. */
+  /** Uses a new one has, USES[0] to USES[1]: as its designer gave it, cut to what its trial measured (usesFor). */
   uses: number
   /** Model code: the body of function (m). */
   look: string
@@ -38,18 +41,26 @@ export interface ThingDesign {
 export function compileThing(d: ThingDesign): ThingKind {
   if (!BUDGETS.includes(d.budget)) throw new Error(`budget ${String(d.budget)} is not 10 or 20`)
   if (!Number.isInteger(d.uses) || d.uses < USES[0] || d.uses > USES[1]) throw new Error(`uses ${String(d.uses)} is not a whole number from ${USES[0]} to ${USES[1]}`)
+  if (typeof d.click !== 'string' || !d.click.trim() || typeof d.shift !== 'string') throw new Error('click and shift are not lines for the hand card')
   const look = compile('look', d.look)
   const factory = compile('thing', d.code)
   const { recipe } = recipeOf(look)
-  return { id: d.id, name: d.name, description: d.description, budget: d.budget, uses: d.uses, recipe, factory, models: new Map() }
+  return { id: d.id, name: d.name, description: d.description, click: d.click, shift: d.shift, budget: d.budget, uses: d.uses, recipe, factory, models: new Map() }
+}
+
+/** A trial's outcome: the errors its code threw (none: it may go into a crate), and what one use tried to take, or null when no use did anything. */
+export interface Trial {
+  problems: string[]
+  perUse: number | null
 }
 
 /**
  * Plays a kind in the game's own hall for a few seconds: one doctor holds it and uses it at two
- * others (press, hold, let go, the second use), walks, throws it, and it lies there. Returns the
- * errors its code threw; none means it may go into a crate.
+ * others (press, hold, let go, the second use), walks, throws it, and it lies there. Measures what
+ * a use's code tried to take from the two (Thing.tried: before any budget; the throw's own hit is
+ * the game's, not counted), for usesFor.
  */
-export function trialThing(kind: ThingKind): string[] {
+export function trialThing(kind: ThingKind): Trial {
   const sim = new Sim()
   sim.apiFor = thingApi
   buildArena(sim, LECTURE_HALL)
@@ -70,7 +81,8 @@ export function trialThing(kind: ThingKind): string[] {
   }
   a.input = { ...a.input, yaw: 0, pitch: 0 }
   // The trial tries every use, whatever the thing's count: none is spent here.
-  sim.newThing(kind, a, a.pos).left = Infinity
+  const thing = sim.newThing(kind, a, a.pos)
+  thing.left = Infinity
   try {
     steps(5)
     press(a, 'use')
@@ -92,10 +104,20 @@ export function trialThing(kind: ThingKind): string[] {
   } finally {
     sim.free()
   }
-  return sim.errors.map((e) => e.error)
+  return { problems: sim.errors.map((e) => e.error), perUse: thing.worked > 0 && thing.tried > 0 ? thing.tried / thing.worked : null }
 }
 
-const design = (id: string, name: string, description: string, budget: Budget, uses: number, look: string, code: string): ThingDesign => ({ id, name, description, budget, uses, look, code, ask: '', by: '', random: false, model: 'the game', ms: 0, made: '2026-11-09T00:00:00.000Z' })
+/**
+ * A thing's uses: its designer's, cut so that all of them together try to take at most LIFE_HARM
+ * as its trial measured a use (a thing that reaches several doctors, or hits hard every time, gets
+ * fewer), never below USES[0].
+ */
+export function usesFor(designed: number, perUse: number | null): number {
+  if (perUse === null) return designed
+  return Math.max(USES[0], Math.min(designed, Math.floor(LIFE_HARM / perUse)))
+}
+
+const design = (id: string, name: string, description: string, click: string, shift: string, budget: Budget, uses: number, look: string, code: string): ThingDesign => ({ id, name, description, click, shift, budget, uses, look, code, ask: '', by: '', random: false, model: 'the game', ms: 0, made: '2026-11-09T00:00:00.000Z' })
 
 /** The game's own things. */
 export const STARTERS: ThingDesign[] = [
@@ -103,6 +125,8 @@ export const STARTERS: ThingDesign[] = [
     'red-pen',
     'Red Pen of Peer Review',
     'Click to strike a line through someone.',
+    'Strikes a red line',
+    '',
     10,
     20,
     `m.cylinder(0.03, 0.03, 0.5, { at: [0, 0, 0.12], rot: [Math.PI / 2, 0, 0], color: '#c0202a' })
@@ -129,6 +153,8 @@ return {
     'thesis-launcher',
     'Bound Thesis Launcher',
     'Lobs a full bound thesis. Heavy, slow and hard to aim; it really hurts.',
+    'Lobs a heavy thesis',
+    '',
     20,
     6,
     `m.box(0.16, 0.18, 0.7, { at: [0, 0, 0.15], color: '#5a4632' })
@@ -160,6 +186,8 @@ return {
     'sabbatical-scooter',
     'Sabbatical Scooter',
     'Stand on it and go fast. Its front bumper bites whoever it meets.',
+    'Nothing: you ride it',
+    '',
     10,
     10,
     `m.box(0.22, 0.06, 0.9, { at: [0, 0.12, 0], color: '#d8402c' })
@@ -198,6 +226,8 @@ return {
     'footnote-grenade',
     'Footnote Grenade',
     'Click to lob one; the next is ready 2 s later. Each goes off a moment after it lands, with a long footnote.',
+    'Lobs a grenade',
+    '',
     20,
     6,
     `m.sphere(0.12, { color: '#3a3a3a' })

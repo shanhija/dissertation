@@ -6,7 +6,7 @@
  */
 
 import { BODY, SLOT_FRAMES } from '../doctor'
-import { BUDGET_WINDOW, BUDGETS, CRATE_OWNER_ONLY, DESIGN_LIMIT, GAITS, HIT_CAP, HOLD_MAX, MATERIALS, PER_SECOND_CAP, SLOTS, SOUNDS, USES, type ArenaSetting, type Gait, type Look } from '../protocol'
+import { BUDGET_WINDOW, BUDGETS, COVERS, CRATE_OWNER_ONLY, DESIGN_LIMIT, GAITS, HIT_CAP, HOLD_MAX, MATERIALS, PER_SECOND_CAP, SLOTS, SOUNDS, USES, type ArenaSetting, type Cover, type Gait, type Look } from '../protocol'
 import { SOFT } from '../model/mesh'
 import { DOCTOR_MASS } from '../sim/forces'
 import { FLOP, MAX_FIELDS_PER_SOURCE, MAX_SIGHTS_PER_SOURCE, MAX_TIES_PER_SOURCE, MAX_ZONES_PER_SOURCE } from '../sim/sim'
@@ -149,7 +149,7 @@ Fairness, which the game also enforces: one hit takes at most ${HIT_CAP}; one at
 
 It runs out: give it as many uses as such a thing would really have, from ${USES[0]} to ${USES[1]}, enough for a fight but never for a whole round, and fewer the more it takes or the more doctors it reaches. A click or a shift-click that does something costs a use, and so does each further second it is held down doing something; a click that does nothing while it is still reloading costs none. With none left it leaves the hand, and what it set going plays out. Its holder sees the uses left.
 
-Whoever picks it up reads its name and one line telling how to use it (click, hold, shift-click), in plain words. They may hold another thing in their other hand and use the two together.
+Whoever picks it up reads its name and one line telling how to use it (click, hold, shift-click), in plain words; and on their hand card, in the heat of the fight, what a click does and what a shift-click does, a few words each. They may hold another thing in their other hand and use the two together.
 
 Write plain code that works the first time, and be quick: the crate opens about ${DESIGN_LIMIT - 10} seconds from now. Use only what is described below.
 
@@ -162,6 +162,8 @@ export interface ThingAnswer {
   again: string
   name: string
   description: string
+  click: string
+  shift: string
   budget: number
   uses: number
   form: string
@@ -175,13 +177,15 @@ export const THING_SCHEMA: Schema = {
     again: str('When the words ask for a thing already had in this match (you made something else of them): its name as listed, or the words of the one being made for another. Otherwise empty.'),
     name: str('Its name, a few words.'),
     description: str('One line for the holder: what it is and how to use it.'),
+    click: str('What a click (or holding the button) does, at most five words, for the hand card.'),
+    shift: str('What a shift-click does, at most five words; empty when it has no other use.'),
     budget: { type: 'integer', enum: [...BUDGETS], description: `What it may take from one doctor in any ${BUDGET_WINDOW} s.` },
     uses: { type: 'integer', minimum: USES[0], maximum: USES[1], description: 'How many uses it has before it is spent.' },
     form: FORM,
     look: str('Model code: the body of function (m), no header.'),
     code: str('Thing code: the body of function (me, w), no header, returning the handlers.'),
   },
-  required: ['again', 'name', 'description', 'budget', 'uses', 'form', 'look', 'code'],
+  required: ['again', 'name', 'description', 'click', 'shift', 'budget', 'uses', 'form', 'look', 'code'],
   additionalProperties: false,
 }
 
@@ -212,12 +216,15 @@ export const WEAR_SYSTEM = `You dress doctors for Dissertation, a silly first-pe
 
 The look: height (1.5 to 2.05 m), build (0.8 thin to 1.3 round), the colours skin, eyes, coat (the lab coat), shirt, trousers and shoes as '#rrggbb', how they walk (${GAITS.slice(1).join(', ')}), and one part worn in each slot: ${SLOTS.join(', ')}. Change only what the words ask for, and leave out everything else.
 
+Every doctor has clothes of their own: a lab coat with sleeves to the wrists and a skirt to the knees, a shirt under it (seen in the coat's V and at the cuffs), trousers and shoes. What they wear as clothing goes in the clothes slot, always in place of the lab coat: give in covers whether it also takes the place of the shirt and of the trousers, and model it round the body beneath. Without the coat the doctor is in their shirt, its sleeves to the wrists; without the shirt too, their trunk and arms are bare; without the trousers, their legs are. The other slots hold what is worn over the clothes and take the place of nothing, but that anything worn on the feet takes the place of the shoes. With the clothes slot empty, the doctor wears their own lab coat again.
+Nothing they wear may pass through anything else they wear. When a new part would overlap or clash with something already worn, take that away by its slot in remove.
+
 A part is model code, built in its slot's frame on a standard doctor ${BODY.height} m tall (the game scales it to the doctor):
 ${frames}
 
 ${modelDoc('worn')}
 Nothing turns a worn part's named parts by code: each hangs from its pivot and swings, sways and bends as the doctor moves, turns, lands, falls and bends over, pulled by the world, the more freely the further its weight hangs from the pivot, and springs back to how it was made. A part made inside another swings on from it, so a chain of parts bends along its length. Make whatever would move on a real body as parts pivoting where it is fixed, and leave what is stiff as plain shapes.
-The doctor under them is soft and rounded, a lab coat over a fitted trunk: model a part as it would sit on such a body, resting on its curves where it touches it, cloth thin and curving round it or falling in folds where it hangs, its ends and edges as soft as the real ones.
+The doctor under them is soft and rounded, a lab coat or clothing over a fitted trunk: model a part as it would sit on such a body, resting on its curves where it touches it, cloth thin and curving round it or falling in folds where it hangs, its ends and edges as soft as the real ones.
 Parts are seen from a few metres away: make the shapes that say what it is clear and bold. Hair and hats leave the eyes free unless the words say otherwise. Write short, plain code that works the first time.`
 
 export interface WearAnswer {
@@ -226,7 +233,7 @@ export interface WearAnswer {
   build?: number
   gait?: Gait
   colors?: Partial<Record<'skin' | 'eyes' | 'coat' | 'shirt' | 'trousers' | 'shoes', string>>
-  parts: { slot: string; name: string; form: string; code: string }[]
+  parts: { slot: string; name: string; covers: string[]; form: string; code: string }[]
   remove: string[]
 }
 
@@ -248,21 +255,29 @@ export const WEAR_SCHEMA: Schema = {
       description: 'New parts to wear, at most one per slot.',
       items: {
         type: 'object',
-        properties: { slot: { type: 'string', enum: [...SLOTS] }, name: str('Its name, a few words.'), form: FORM, code: str('Model code: the body of function (m), no header.') },
-        required: ['slot', 'name', 'form', 'code'],
+        properties: {
+          slot: { type: 'string', enum: [...SLOTS] },
+          name: str('Its name, a few words.'),
+          covers: { type: 'array', description: 'Clothing only: what of the doctor’s own shirt and trousers it also takes the place of, besides the lab coat. Empty in any other slot.', items: { type: 'string', enum: [...COVERS] } },
+          form: FORM,
+          code: str('Model code: the body of function (m), no header.'),
+        },
+        required: ['slot', 'name', 'covers', 'form', 'code'],
         additionalProperties: false,
       },
     },
-    remove: { type: 'array', description: 'Slots to leave empty.', items: { type: 'string', enum: [...SLOTS] } },
+    remove: { type: 'array', description: 'Slots to leave empty: parts worn now that the words take away, or that a new part would overlap.', items: { type: 'string', enum: [...SLOTS] } },
   },
   required: ['name', 'parts', 'remove'],
   additionalProperties: false,
 }
 
-export function wearMessage(req: { ask: string; look: Look; wornNames: Partial<Record<string, string>>; fix: { answer: WearAnswer; problems: string[] } | null }): string {
+export function wearMessage(req: { ask: string; look: Look; worn: Partial<Record<string, { name: string; covers: Cover[] }>>; fix: { answer: WearAnswer; problems: string[] } | null }): string {
   const { worn: _worn, ...colours } = req.look
   void _worn
-  const parts = [`The doctor now: ${JSON.stringify(colours)}; wearing ${Object.entries(req.wornNames).map(([s, n]) => `${s}: ${n}`).join(', ') || 'nothing'}.`, `They say: ${JSON.stringify(req.ask)}`]
+  const wearing = Object.entries(req.worn).map(([s, w]) => `${s}: ${w!.name}${s === 'clothes' ? ` (in place of their own ${['lab coat', ...w!.covers].join(', ')})` : ''}`)
+  if (!req.worn.clothes) wearing.unshift('their own lab coat')
+  const parts = [`The doctor now: ${JSON.stringify(colours)}; wearing ${wearing.join(', ')}.`, `They say: ${JSON.stringify(req.ask)}`]
   if (req.fix) parts.push(`Your answer would not build:\n${req.fix.problems.map((p) => `- ${p}`).join('\n')}\nFix it. It was:\n${JSON.stringify(req.fix.answer, null, 1)}`)
   return parts.join('\n\n')
 }

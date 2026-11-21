@@ -2,19 +2,20 @@
  * A round as the player sees it: the first-person view and the HUD over it (credibility, what
  * is in hand and how it came, the request line, the review on their next request, the feed of
  * crates opened and who was dismissed by whom, who just hurt them and from where, the
- * committee's patience) and the request box. T (or Enter) opens the box: the doctor stops and
- * writes while everyone else goes on (in the countdown too); Enter sends it, Escape gives up.
+ * committee's patience, the match's standing, where their own crates are, withdrawing) and the
+ * request box. T (or Enter) opens the box: the doctor stops and writes while everyone else goes on
+ * (in the countdown too); Enter sends it, Escape gives up.
  * Dismissed, T opens the box for one review a round of the doctor they watch.
  */
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { PerspectiveCamera } from 'three'
+import { Vector3, type PerspectiveCamera } from 'three'
 
 import { Controls } from './controls'
 import type { Net } from './net'
 import { openOptions, options as currentOptions, pixelRatio, useOptions, useOptionsOpen } from './options'
-import { BARE_HANDS, BUDGET_WINDOW, CRATE_OWNER_ONLY, FISTS_BUDGET, HEARING, PATIENCE, PATIENCE_DRAIN, type GameEvent, type Lobby, type Origin } from './protocol'
+import { BARE_HANDS, BUDGET_WINDOW, CRATE_CLAIM, CRATE_OWNER_ONLY, FALL_DAMAGE, FISTS_BUDGET, HEARING, PATIENCE, PATIENCE_DRAIN, WITHDRAW, type GameEvent, type HeldInfo, type Lobby, type Origin, type Stats, type Tally } from './protocol'
 import { Post } from './scene/post'
 import { World } from './scene/world'
 import { play, wakeAudio } from './sounds'
@@ -31,24 +32,31 @@ type Writing = { kind: 'request' } | { kind: 'review'; target: string }
 
 /** The marks at the screen's edge pointing to whoever hurt the player, at most this many. */
 const MARKS = 3
+/** Markers on the player's own crates (the one brought to their defence and the one asked for). */
+const CRATE_MARKS = 2
+/** Metres within which a crate in view has no marker: its own words show. */
+const NEAR_CRATE = 10
+/** Seconds a hand card tells how its thing came and what it is, after it came into the hand; then only its uses and what its buttons do. */
+const FRESH = 6
 
 const short = (text: string, n: number) => (text.length > n ? `${text.slice(0, n - 1)}…` : text)
 
 /** A crate opened, as the feed tells it: who opened it (and whose it was), what was asked and what came (made as something else because it was had already this match, twisted by the genie, or from the archive in its place), and the review it was under. */
 function crateStory(e: Extract<GameEvent, { type: 'opened' }>, name: (id: string) => string): string {
-  const who = e.by === e.owner ? name(e.by) : `${name(e.by)} took ${name(e.owner)}'s crate`
+  const who = e.owner === null ? `${name(e.by)} opened the committee's crate` : e.by === e.owner ? name(e.by) : `${name(e.by)} took ${name(e.owner)}'s crate`
   const what = e.archive ? `${e.thing}, from the archive${e.ask === null ? '' : ` in place of “${e.ask}”`}` : e.ask === null ? `${e.thing}, something nobody has had` : `“${e.ask}” became ${e.thing}`
   return [`${who}: ${what}.`, ...(e.again ? [`${e.again} was had already this match.`] : []), ...(e.genie ? ['The genie twisted it.'] : []), ...(e.curse ? [`Under review: “${short(e.curse, 60)}”`] : [])].join(' ')
 }
 
 /** How a thing in hand came out of its crate: who asked for what, and whether it was had already this match, the genie twisted it or the archive stood in. */
 function originLine(o: Origin, you: string | null, name: (id: string) => string): string {
+  if (o.by === null) return "From the committee's crate"
   if (o.archive) return o.ask === null ? 'From the archive' : `From the archive, in place of “${o.ask}”`
   const who = o.by === you ? 'You' : name(o.by)
   return o.ask === null ? `${who} asked for something nobody has had` : `${who} asked for “${o.ask}”${o.again ? `; ${o.again} was had already this match` : ''}${o.genie ? '; the genie twisted it' : ''}`
 }
 
-function Scene({ net, controls, worldRef, fps, marks }: { net: Net; controls: Controls; worldRef: React.MutableRefObject<World | null>; fps: React.RefObject<HTMLDivElement | null>; marks: React.RefObject<HTMLDivElement | null> }) {
+function Scene({ net, controls, worldRef, fps, marks, crateMarks }: { net: Net; controls: Controls; worldRef: React.MutableRefObject<World | null>; fps: React.RefObject<HTMLDivElement | null>; marks: React.RefObject<HTMLDivElement | null>; crateMarks: React.RefObject<HTMLDivElement | null> }) {
   const o = useOptions()
   const { scene, camera, gl, size, setDpr } = useThree()
   const aligned = useRef<string | null>(null)
@@ -117,9 +125,40 @@ function Scene({ net, controls, worldRef, fps, marks }: { net: Net; controls: Co
       style.opacity = a ? a.strength.toFixed(2) : '0'
       if (a) style.transform = `rotate(${a.turn.toFixed(3)}rad)`
     })
+    // The player's own crates, through walls: where on the screen, or at its edge toward them.
+    const crates = w.own?.alive ? (net.latest()?.snap.crates ?? []).filter((c) => c.owner === net.you) : []
+    crateMarks.current!.childNodes.forEach((el, i) => {
+      const box = el as HTMLElement
+      const c = crates[i]
+      box.style.display = c ? '' : 'none'
+      if (!c) return
+      const at = spot.set(c.p[0], c.p[1] + 1.6, c.p[2])
+      const dist = camera.position.distanceTo(at)
+      at.project(camera)
+      // Behind the eye the projection mirrors: turned back, it points the right way along the edge.
+      const behind = at.z > 1
+      let [x, y] = behind ? [-at.x, -at.y] : [at.x, at.y]
+      if (behind && Math.hypot(x, y) < 1e-3) y = -1
+      const edge = Math.max(Math.abs(x) / 0.9, Math.abs(y) / 0.82)
+      const off = behind || edge > 1
+      // Near and in view, the crate's own words say it all.
+      box.style.display = off || dist >= NEAR_CRATE ? '' : 'none'
+      if (off) [x, y] = [x / edge, y / edge]
+      box.style.left = `${((x + 1) / 2) * size.width}px`
+      box.style.top = `${((1 - y) / 2) * size.height}px`
+      box.dataset.state = c.state
+      box.classList.toggle('off', off)
+      const arrow = box.firstElementChild as HTMLElement
+      arrow.style.transform = `rotate(${Math.atan2(-y, x).toFixed(3)}rad)`
+      const text = `${c.state === 'ready' ? 'Your crate · ready' : 'Your crate'} · ${Math.round(dist)} m`
+      const label = box.lastElementChild as HTMLElement
+      if (label.textContent !== text) label.textContent = text
+    })
   })
   return null
 }
+
+const spot = new Vector3()
 
 /** How to play, on the pause card: what, and the keys. */
 const KEYS: [string, React.ReactNode][] = [
@@ -147,6 +186,12 @@ const KEYS: [string, React.ReactNode][] = [
   ],
   ['Ask for anything', <kbd>T</kbd>],
   ['Something nobody has had', <kbd>R</kbd>],
+  [
+    `Back to a spawn point, for ${FALL_DAMAGE}`,
+    <>
+      hold <kbd>K</kbd>
+    </>,
+  ],
   ['Taunt', <kbd>V</kbd>],
   ['The scores', <kbd>Tab</kbd>],
   ['Options', <kbd>O</kbd>],
@@ -180,6 +225,11 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
   phaseRef.current = lobby.phase
   const crosshair = useRef<HTMLDivElement>(null)
   const marks = useRef<HTMLDivElement>(null)
+  const crateMarks = useRef<HTMLDivElement>(null)
+  /** What came into each hand, and when: its card tells more for FRESH seconds. */
+  const came = useRef<[{ name: string; at: number } | null, { name: string; at: number } | null]>([null, null])
+  const leaderRef = useRef(lobby.leader)
+  leaderRef.current = lobby.leader
   /** The last hit on the player, for the slip under the crosshair: by whom, with what, how much (added up while it goes on). */
   const struck = useRef<{ by: string | null; what: string; amount: number; until: number } | null>(null)
   /** What the player's things (and bare hands) have taken all they may from, and until when: on the hand cards. */
@@ -188,7 +238,7 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
   const pageNote = useRef<{ text: string; until: number } | null>(null)
   /** When the last hit by the player ticked. */
   const ticked = useRef(0)
-  const name = (id: string) => net.player(id)?.name ?? 'someone'
+  const name = (id: string) => net.name(id)
 
   /** Whom the player may review now: dismissed in a round with a review left, the doctor they watch, unless a bot (bots ask for nothing). */
   const reviewTarget = (): string | null => {
@@ -271,7 +321,10 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
     const push = (text: string, tone: FeedLine['tone']) => setFeed((f) => [...f.filter((l) => l.until > performance.now()), { id: ++feedId.current, text, until: performance.now() + 7000, tone }].slice(-7))
     return net.onEvent((e: GameEvent) => {
       const now = performance.now()
-      if (e.type === 'out') push(e.by && e.by !== 'committee' ? `${name(e.victim)} was dismissed by ${name(e.by)} (${e.what})` : `${name(e.victim)} was dismissed by ${e.what}`, 'out')
+      if (e.type === 'out') {
+        const who = e.victim === leaderRef.current ? `${name(e.victim)}, who led the match,` : name(e.victim)
+        push(e.by && e.by !== 'committee' && e.by !== e.victim ? `${who} was dismissed by ${name(e.by)} (${e.what})` : `${who} was dismissed by ${e.what}`, 'out')
+      }
       else if (e.type === 'opened') push(crateStory(e, name), 'crate')
       else if (e.type === 'fizzle') push(`${e.thing} fizzled out`, 'plain')
       else if (e.type === 'curse') push(e.by ? `${name(e.victim)} is under review by ${name(e.by)}` : `${name(e.victim)} is under review`, 'curse')
@@ -306,12 +359,18 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
   const now = performance.now()
   const note = (pageNote.current && pageNote.current.until > now ? pageNote.current.text : null) ?? me?.note ?? (net.note && net.note.until > now ? net.note.text : null)
   const hit = struck.current && struck.current.until > now ? struck.current : null
-  const watched = worldRef.current?.watching ? net.player(worldRef.current.watching)?.name : null
+  const watched = worldRef.current?.watching ? net.name(worldRef.current.watching) : null
+  // A thing new in a hand: its card tells more for a while.
+  for (const h of [0, 1] as const) {
+    const held = me?.hands[h] ?? null
+    if (!held) came.current[h] = null
+    else if (came.current[h]?.name !== held.name) came.current[h] = { name: held.name, at: now }
+  }
 
   return (
     <div className="round" ref={holder}>
       <Canvas shadows="percentage" dpr={pixelRatio(currentOptions())} gl={{ antialias: false, powerPreference: 'high-performance' }} camera={{ fov: currentOptions().fov, near: 0.08, far: 400 }} onPointerDown={() => wakeAudio()}>
-        {controls && <Scene net={net} controls={controls} worldRef={worldRef} fps={fps} marks={marks} />}
+        {controls && <Scene net={net} controls={controls} worldRef={worldRef} fps={fps} marks={marks} crateMarks={crateMarks} />}
       </Canvas>
       {shown.fps && <div className="fps" ref={fps} />}
 
@@ -327,6 +386,25 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
         />
       )}
       {own?.alive && <div ref={crosshair} className={own.fx?.held ? 'crosshair held' : 'crosshair'} />}
+      {/* Each hand's uses left beside the crosshair, on its side, where the eye already is. */}
+      {own?.alive &&
+        me &&
+        ([0, 1] as const).map((h) => {
+          const held = me.hands[h]
+          return held ? (
+            <div key={h} className={`ammo ${h === 0 ? 'left' : 'right'}${held.left <= 2 ? ' low' : ''}`}>
+              {held.left}
+            </div>
+          ) : null
+        })}
+      {own?.alive && me && me.withdraw > 0 && (
+        <div className="withdraw plate">
+          Back to a spawn point, for {FALL_DAMAGE}: keep holding <kbd>K</kbd>
+          <div className="bar">
+            <i style={{ width: `${me.withdraw * 100}%` }} />
+          </div>
+        </div>
+      )}
       {own?.alive && own.fx?.held && <div className="held-note">Held</div>}
       {own?.alive && hit && (
         <div className="hit-slip plate">
@@ -334,6 +412,7 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
         </div>
       )}
 
+      <MatchStrip lobby={lobby} you={net.you} />
       <div className="hud-top">
         {lobby.phase === 'round' && (
           <div className={`patience plate ${patience <= 0 ? 'lost' : ''}`}>
@@ -406,17 +485,28 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
               // What this hand has taken all it may from, and for how long yet.
               const gone = spent.current.get(held ? held.name : BARE_HANDS)
               const left = gone ? Math.ceil((gone.until - now) / 1000) : 0
+              const fresh = (came.current[h]?.at ?? 0) > now - FRESH * 1000
               return (
                 <div key={h} className={held ? 'hand-card plate' : 'hand-card plate empty'}>
                   <div className="label">{h === 0 ? 'Left hand · left button' : 'Right hand · right button'}</div>
                   {held ? (
                     <>
-                      <div className="held-name">
-                        {held.name}
-                        <span className={held.left <= 2 ? 'held-left low' : 'held-left'}>{held.left === 1 ? '1 use left' : `${held.left} uses left`}</span>
+                      <div className="held-head">
+                        <div className="held-name">{held.name}</div>
+                        <Uses held={held} />
                       </div>
-                      {held.origin && <div className="held-origin">{originLine(held.origin, net.you, name)}</div>}
-                      <div className="held-desc">{asTwoHanded(held.description)}</div>
+                      <div className="held-acts">
+                        <div>
+                          <kbd>Click</kbd> {held.click}
+                        </div>
+                        {held.shift && (
+                          <div>
+                            <kbd>Shift</kbd>+click {held.shift}
+                          </div>
+                        )}
+                      </div>
+                      {fresh && held.origin && <div className="held-origin">{originLine(held.origin, net.you, name)}</div>}
+                      {fresh && <div className="held-desc">{asTwoHanded(held.description)}</div>}
                       <div className="held-budget">
                         At most {held.budget} from each in {BUDGET_WINDOW} s · <kbd>{h === 0 ? 'Q' : 'F'}</kbd> throws it
                       </div>
@@ -444,6 +534,16 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
           {me.curse.text}
         </div>
       )}
+
+      {/* The player's own crates: placed by the frame loop (Scene). */}
+      <div className="crate-marks" ref={crateMarks}>
+        {Array.from({ length: CRATE_MARKS }, (_, i) => (
+          <div key={i} className="crate-mark" style={{ display: 'none' }}>
+            <i />
+            <span />
+          </div>
+        ))}
+      </div>
 
       {/* Toward whoever hurt the player, over the slips: turned by the frame loop (Scene). */}
       <div className="hit-marks" ref={marks}>
@@ -580,7 +680,12 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
                 <div className="hint">
                   Each mouse button works its own hand; an empty one shoves, at most {FISTS_BUDGET} from each in {BUDGET_WINDOW} s.
                 </div>
-                <div className="hint">Everyone's first crate waits beside them as the round begins. A crate is its asker's alone for {CRATE_OWNER_ONLY} s once ready, then anyone's.</div>
+                <div className="hint">
+                  Everyone's first crate waits beside them as the round begins. A crate is its asker's alone for {CRATE_OWNER_ONLY} s once ready, then anyone's; left {CRATE_CLAIM} s, it no longer holds your next request back. The committee's brass-banded crates are anyone's at once.
+                </div>
+                <div className="hint">
+                  Stuck somewhere? Hold <kbd>K</kbd> for {WITHDRAW} s: back to a spawn point, for {FALL_DAMAGE}, put down to whoever last hurt you.
+                </div>
                 <div className="hint">Every thing has its own count of uses, on its card, and is gone when they are spent. Nothing comes twice in a match: words asking for a thing had already become something else.</div>
                 <div className="hint">
                   Dismissed, you may review a player you watch (not a bot), once a round (<kbd>T</kbd>): it bends their next request.
@@ -594,15 +699,65 @@ export function Round({ net, lobby }: { net: Net; lobby: Lobby }) {
   )
 }
 
+/** A thing's uses left as a number over what it came with, and as pips while there are few enough to count. */
+function Uses({ held }: { held: HeldInfo }) {
+  return (
+    <div className={held.left <= 2 ? 'held-uses low' : 'held-uses'} title="Uses left">
+      <b>{held.left}</b>
+      <span>/{held.uses}</span>
+      {held.uses <= 15 && (
+        <div className="pips">
+          {Array.from({ length: held.uses }, (_, i) => (
+            <i key={i} className={i < held.left ? 'on' : ''} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The match at a glance, at the top left: each doctor's rounds won toward the doctorate, the leader starred. */
+function MatchStrip({ lobby, you }: { lobby: Lobby; you: string | null }) {
+  const players = lobby.players.filter((p) => p.name).sort((a, b) => b.wins - a.wins)
+  return (
+    <div className="match-strip plate">
+      <span className="to">First to {lobby.wins}</span>
+      {players.map((p) => (
+        <span key={p.id} className={p.id === you ? 'who you' : 'who'}>
+          <i className="dot" style={{ background: p.color }} />
+          {p.id === lobby.leader && <span className="lead">★</span>}
+          {p.name.length > 14 ? `${p.name.slice(0, 13)}…` : p.name}
+          <span className="pips">
+            {Array.from({ length: lobby.wins }, (_, i) => (
+              <i key={i} className={i < p.wins ? 'on' : ''} />
+            ))}
+          </span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** Who dismissed whom in a tally, most often first, in words. */
+function dismissalLines(t: Tally, name: (id: string) => string): string[] {
+  return [...t.dismissals].sort((a, b) => b.n - a.n).map((d) => `${d.by ? name(d.by) : 'Nobody'} → ${name(d.victim)}${d.n > 1 ? ` ×${d.n}` : ''}`)
+}
+
 function Scores({ net, lobby }: { net: Net; lobby: Lobby }) {
   const snap = net.latest()?.snap
+  const stats: Stats | null = net.stats
+  const name = (id: string) => net.name(id)
   // A page here without a name only watches: it plays no round and has no row.
   const players = lobby.players.filter((p) => p.name).sort((a, b) => b.wins - a.wins)
+  const match = stats?.match
+  const dismissed = (id: string) => (match ? match.dismissals.filter((d) => d.by === id).reduce((s, d) => s + d.n, 0) : 0)
+  const round = stats ? dismissalLines(stats.round, name) : []
+  const all = match ? dismissalLines(match, name) : []
   return (
     <div className="scores page">
       <div className="page-body">
         <h2>The Standings</h2>
-        <p className="lede">The first to win {lobby.wins} rounds takes the doctorate</p>
+        <p className="lede">The first to win {lobby.wins} rounds takes the doctorate. The numbers are this match's.</p>
         <div className="ornament">
           <i />
         </div>
@@ -610,28 +765,47 @@ function Scores({ net, lobby }: { net: Net; lobby: Lobby }) {
           <thead>
             <tr>
               <th>Doctor</th>
-              <th>Thesis</th>
               <th className="num">Credibility</th>
               <th className="num">Rounds</th>
+              <th className="num">Dismissed</th>
+              <th className="num">Took</th>
+              <th className="num">Lost</th>
+              <th>Best thing</th>
             </tr>
           </thead>
           <tbody>
             {players.map((p) => {
               const d = snap?.doctors.find((x) => x.id === p.id)
+              const best = match?.best[p.id]
               return (
                 <tr key={p.id} className={p.id === net.you ? 'you' : ''}>
                   <td className="who">
                     <span className="dot" style={{ background: p.color }} />
+                    {p.id === lobby.leader && <span className="lead">★ </span>}
                     {p.name}
+                    {p.title && <div className="title">{p.title}</div>}
                   </td>
-                  <td className="title">{p.title}</td>
                   <td className={d && !d.alive ? 'num out' : 'num'}>{d ? (d.alive ? Math.ceil(d.cred) : 'dismissed') : '–'}</td>
                   <td className="num">{p.wins}</td>
+                  <td className="num">{dismissed(p.id)}</td>
+                  <td className="num">{Math.round(match?.dealt[p.id] ?? 0)}</td>
+                  <td className="num">{Math.round(match?.taken[p.id] ?? 0)}</td>
+                  <td className="best">{best ? `${best.thing} (${Math.round(best.amount)})` : '–'}</td>
                 </tr>
               )
             })}
           </tbody>
         </table>
+        {round.length > 0 && (
+          <p className="who-whom">
+            <b>This round:</b> {round.join(' · ')}
+          </p>
+        )}
+        {all.length > 0 && (
+          <p className="who-whom">
+            <b>This match:</b> {all.join(' · ')}
+          </p>
+        )}
       </div>
     </div>
   )

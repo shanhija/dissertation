@@ -580,6 +580,6 @@ describe('a thing’s uses', () => {
     expect(() => compileThing({ ...STARTERS[0]!, uses: 2.5 })).toThrow(/uses 2.5 is not/)
     // Three uses would be spent before the trial throws it, and its throw is what fails.
     const late = { ...thing('late', `return { use() { w.sound(me.pos(), 'bang') }, hold() { w.sound(me.pos(), 'hum') }, alt() { w.sound(me.pos(), 'zap') }, thrown() { const o = null; o.x = 1 } }`), uses: 3 }
-    expect(trialThing(compileThing(late))).toEqual([expect.stringContaining('thrown:')])
+    expect(trialThing(compileThing(late)).problems).toEqual([expect.stringContaining('thrown:')])
   })
 })

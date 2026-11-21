@@ -39,7 +39,7 @@ it('E at a crate still only its asker’s says whose it is and for how long; the
   steps(sim, CRATE_OWNER_ONLY * 60)
   press(b, 'pick')
   expect(told(sim, 2, 'notYet')).toEqual([])
-  expect(sim.me('b').hands[0]).toEqual({ name: STARTERS[0]!.name, description: STARTERS[0]!.description, budget: STARTERS[0]!.budget, left: STARTERS[0]!.uses, origin: { by: 'a', ask: 'a lamp', genie: true, again: null, archive: false } })
+  expect(sim.me('b').hands[0]).toEqual({ name: STARTERS[0]!.name, description: STARTERS[0]!.description, click: STARTERS[0]!.click, shift: STARTERS[0]!.shift, budget: STARTERS[0]!.budget, left: STARTERS[0]!.uses, uses: STARTERS[0]!.uses, origin: { by: 'a', ask: 'a lamp', genie: true, again: null, archive: false } })
   // A thing from no crate came from nowhere in particular.
   sim.newThing(compileThing(STARTERS[1]!), a, a.pos)
   expect(sim.me('a').hands[0]!.origin).toBe(null)

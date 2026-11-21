@@ -26,7 +26,7 @@ describe('the API reference', () => {
       ['a field', 'w.field({ at: me.pos(), radius: 1 }).hit = 1'],
       ['a rope', 'w.tie(me, [0, 0, 0]).hit = 1'],
     ]) {
-      expect(trialThing(compileThing(thing('frozen', `return { use() { ${line} } }`))).join(' '), what).toMatch(/Cannot add property hit, object is not extensible/)
+      expect(trialThing(compileThing(thing('frozen', `return { use() { ${line} } }`))).problems.join(' '), what).toMatch(/Cannot add property hit, object is not extensible/)
     }
   })
 

@@ -666,7 +666,7 @@ export class World {
     const full = fullTags(this.camera.position, this.camera.getWorldDirection(new Vector3()), marks)
     for (const [id, d] of this.doctors) {
       const info = this.net.player(id)
-      d.mesh.label(info?.name ?? '', info?.color ?? '#ffffff', d.cred, full.has(id))
+      d.mesh.label(info?.name ?? '', info?.color ?? '#ffffff', d.cred, full.has(id), this.net.lobby?.leader === id)
     }
   }
 
@@ -687,7 +687,7 @@ export class World {
     crate.cog.visible = true
     // A doctor too, for a countdown with nobody in sight (a plain body is drawn as a doctor is).
     const doctor = new DoctorMesh()
-    doctor.label('', '#ffffff', 100, true)
+    doctor.label('', '#ffffff', 100, true, false)
     this.warmth = { crate, doctor }
     const group = new Group()
     group.add(crate.group, doctor.root, new ModelInstance(WARM_MODEL).root, this.sights.warm(WARM_MODEL), this.fx.warm())
@@ -937,7 +937,7 @@ export class World {
   /** A crate as drawn at the server time t, its label saying whose it is and what they asked for, then whom it waits for, then that E opens it. */
   private placeCrate(cb: CrateSnap, ca: CrateSnap, k: number, now: number, t: number): void {
     let c = this.crates.get(cb.id)
-    const owner = this.net.player(cb.owner)
+    const owner = cb.owner === null ? null : this.net.player(cb.owner)
     if (!c) {
       const group = new Group()
       // What is solid is cut off above a plane that rises as the crate comes in.
@@ -950,7 +950,8 @@ export class World {
       const wood = surfaceMaps('planks')
       const box = new Mesh(CRATE, clip(paint(new MeshStandardMaterial({ color: '#c49a68', map: wood.map, normalMap: wood.normal, normalScale: new Vector2(1.5, 1.5), roughness: 0.8 }), PAINT_MODEL)))
       box.castShadow = true
-      const band = new Mesh(BRACKET, clip(paint(new MeshStandardMaterial({ color: harmonizedHex(owner?.color ?? '#888888'), roughness: 0.7 }), PAINT_MODEL)))
+      // The asker's colour; the committee's crates brass.
+      const band = new Mesh(BRACKET, clip(paint(new MeshStandardMaterial({ color: harmonizedHex(cb.owner === null ? '#b08a3c' : (owner?.color ?? '#888888')), roughness: 0.7 }), PAINT_MODEL)))
       const metal = surfaceMaps('metal')
       const bracketMat = clip(paint(new MeshStandardMaterial({ color: '#8a8f98', map: metal.map, metalness: 0.85, roughness: 0.35 }), PAINT_MODEL))
       for (const y of [-0.4, 0.4]) {
@@ -1003,7 +1004,7 @@ export class World {
     // models, come from the archive at once: not something new); ready, whom it waits for (in the
     // countdown, when nobody may open it, to all; in a live round, to anyone else for its first
     // seconds, counted), then E.
-    const who = owner?.name ?? 'someone'
+    const who = cb.owner === null ? 'The committee' : (owner?.name ?? 'someone')
     const mine = cb.owner === this.net.you
     const wait = mine || cb.ownerUntil === null ? 0 : Math.ceil(cb.ownerUntil - t)
     const open = cb.state === 'ready' && cb.ownerUntil !== null && (mine || wait <= 0)

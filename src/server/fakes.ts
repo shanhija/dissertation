@@ -18,7 +18,7 @@ import type { ArenaAnswer, ThingAnswer, WearAnswer } from './prompts'
 import { Store } from './store'
 import type { Phrase, Speech, Voice } from './voice'
 
-const ARENA_CODE = `a.sky({ color: '#223344' })
+export const ARENA_CODE = `a.sky({ color: '#223344' })
 a.box([40, 1, 40], { at: [0, -0.5, 0], color: '#888888' })
 a.box([6, 2, 6], { at: [8, 1, 8], color: '#aa7744' })
 a.ramp([3, 2, 5], { at: [8, 1, 2.5], color: '#775533' })
@@ -32,6 +32,8 @@ export class FakeDesigners implements Designers {
   broken = 0
   /** Things fail to come at all. */
   failing = false
+  /** The next look's answer, when a test sets one (else a tall hat and a red coat). */
+  nextWear: WearAnswer | null = null
   /** What was asked, and for a thing how long its crate waited for it (null: none waited). */
   asked: { kind: string; message: string; crateMs: number | null }[] = []
   private n = 0
@@ -69,11 +71,14 @@ export class FakeDesigners implements Designers {
     const words = /asks for: (".*")/.exec(message)?.[1]
     const had = /^Had already in this match: (.*)\.$/m.exec(message)?.[1] ?? ''
     const again = words ? (had.split('; ').find((h) => h.endsWith(`(asked as ${words})`))?.replace(/ \(asked as .*\)$/, '') ?? '') : ''
-    return this.wait({ again, name: `Made Thing ${++this.n}`, description: s.description, budget: 10, uses: 10, form: 'A plain test form.', look: s.look, code: broken ? 'return { use() { me.nothing.at.all() } }' : s.code })
+    return this.wait({ again, name: `Made Thing ${++this.n}`, description: s.description, click: s.click, shift: s.shift, budget: 10, uses: 10, form: 'A plain test form.', look: s.look, code: broken ? 'return { use() { me.nothing.at.all() } }' : s.code })
   }
   wear(message: string): Promise<Answered<WearAnswer>> {
     this.asked.push({ kind: 'wear', message, crateMs: null })
-    return this.wait({ name: 'A tall hat', colors: { coat: '#ff0000' }, parts: [{ slot: 'head', name: 'Tall hat', form: 'A tall round crown with a flat brim.', code: 'm.cylinder(0.12, 0.12, 0.4, { at: [0, 0.3, 0], color: "black" })' }], remove: [] })
+    const set = this.nextWear
+    this.nextWear = null
+    if (set) return this.wait(set)
+    return this.wait({ name: 'A tall hat', colors: { coat: '#ff0000' }, parts: [{ slot: 'head', name: 'Tall hat', covers: [], form: 'A tall round crown with a flat brim.', code: 'm.cylinder(0.12, 0.12, 0.4, { at: [0, 0.3, 0], color: "black" })' }], remove: [] })
   }
   arena(_: unknown, message: string): Promise<Answered<ArenaAnswer>> {
     this.asked.push({ kind: 'arena', message, crateMs: null })

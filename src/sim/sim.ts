@@ -18,10 +18,12 @@ import {
   HIT_CAP,
   HANDS,
   HOLD_MAX,
+  CRATE_GONE,
   NO_INPUT,
   PER_SECOND_CAP,
   SHOVE_DAMAGE,
   START_CRED,
+  WITHDRAW,
   type ArenaView,
   type Budget,
   type BodySnap,
@@ -167,6 +169,9 @@ export interface ThingKind {
   id: string
   name: string
   description: string
+  /** What a click does, and a shift-click, in a few words each (shift empty: no other use). */
+  click: string
+  shift: string
   budget: Budget
   /** Uses a new one has (see USES). */
   uses: number
@@ -263,6 +268,8 @@ export interface Doctor {
   fists: Ledger
   /** The last time another doctor hurt them or moved them through made code, and how: a landing soon after is charged to it, a fall out credited. */
   lastBlow: { src: Source; t: number } | null
+  /** Seconds K has been held toward withdrawing (see WITHDRAW); a hit starts it again. */
+  withdrawing: number
 }
 
 /** Who did it: a player through a thing or their bare hands, or the arena. */
@@ -325,6 +332,14 @@ export interface Thing {
   origin: Origin | null
   /** Uses left (see USES); the trial's are endless. */
   left: number
+  /**
+   * Uses it has cost so far, and what its code asked w.hurt to take from other doctors meanwhile,
+   * each call at most HIT_CAP and each doctor at most PER_SECOND_CAP in any second (triedLately,
+   * the last second's), before any budget: the trial measures a use by them.
+   */
+  worked: number
+  tried: number
+  triedLately: { victim: string; t: number; amount: number }[]
   /**
    * The press its holder is working through, from a press to letting go: whether it has cost its
    * use yet, the seconds held since (toward the next use), and whether it did something in them.
@@ -409,7 +424,8 @@ export type Made = { archive: false; genie: boolean; again: string | null; curse
 
 export interface Crate {
   id: string
-  owner: string
+  /** The asker, or null: the committee's, from the archive and anyone's once ready. */
+  owner: string | null
   body: RigidBody
   /** Its middle. */
   p: Vec3
@@ -635,6 +651,7 @@ export class Sim {
       ragSpeedBefore: 0,
       fists: { hits: [], shown: new Map() },
       lastBlow: null,
+      withdrawing: 0,
     }
     this.own(collider, { kind: 'doctor', id })
     this.doctors.set(id, d)
@@ -801,8 +818,14 @@ export class Sim {
     d.counts = { use: [...p.use], other: [...p.other], throw: [...p.throw], pick: p.pick, jump: p.jump }
     d.yaw = input.yaw
     d.pitch = clamp(input.pitch, -1.45, 1.45)
-    if (d.rag) return this.stepRag(d, dt)
+    if (d.rag) {
+      d.withdrawing = 0
+      return this.stepRag(d, dt)
+    }
     if (!d.alive) return
+    // K held: back to a spawn point once it has been held long enough, unless a hit came between.
+    d.withdrawing = input.withdraw && this.live ? d.withdrawing + dt : 0
+    if (d.withdrawing >= WITHDRAW) return this.fallOut(d, 'withdrawing')
     d.effects = d.effects.filter((e) => e.until > this.time)
     const fx = this.holdRule(d, this.fx(d), dt)
     if (Math.abs(fx.size - d.size) > 0.01) {
@@ -916,7 +939,7 @@ export class Sim {
     d.pos = [d.pos[0] + m.x, d.pos[1] + m.y, d.pos[2] + m.z]
     d.body.setNextKinematicTranslation({ x: d.pos[0], y: d.pos[1] + CENTER * d.size, z: d.pos[2] })
 
-    if (this.arena && d.pos[1] < this.arena.floor) this.fallOut(d)
+    if (this.arena && d.pos[1] < this.arena.floor) this.fallOut(d, 'a fall from the arena')
   }
 
   /** Hops a doctor up onto a step just ahead in a direction: a riser in the way, room above it, and a flat top no higher than STEP. */
@@ -935,8 +958,12 @@ export class Sim {
     d.grounded = false
   }
 
-  /** Out of the arena: back at a spawn point, for FALL_DAMAGE credited to whoever last moved or hurt them, if lately (outside every budget and cap: a fall out always costs its FALL_DAMAGE). */
-  private fallOut(d: Doctor): void {
+  /**
+   * Out of the arena, or withdrawn there with K: back at a spawn point, for FALL_DAMAGE credited
+   * to whoever last moved or hurt them, if lately (outside every budget and cap: a fall out always
+   * costs its FALL_DAMAGE).
+   */
+  private fallOut(d: Doctor, what: 'a fall from the arena' | 'withdrawing'): void {
     if (d.rag) {
       this.endRag(d)
       d.collider.setEnabled(true)
@@ -950,7 +977,8 @@ export class Sim {
     d.push = [0, 0, 0]
     d.vy = 0
     d.body.setTranslation({ x: d.pos[0], y: d.pos[1] + CENTER * d.size, z: d.pos[2] }, true)
-    if (this.live) this.take(d, FALL_DAMAGE, { attacker: blow?.attacker ?? null, thing: null, fists: null, what: 'a fall from the arena' })
+    d.withdrawing = 0
+    if (this.live) this.take(d, FALL_DAMAGE, { attacker: blow?.attacker ?? null, thing: null, fists: null, what })
     // Back in, they start clean: nothing after is put down to that blow.
     d.lastBlow = null
   }
@@ -1075,10 +1103,22 @@ export class Sim {
     return this.take(victim, take, src)
   }
 
+  /** A thing's code asked to take this much from a doctor (see Thing.tried). */
+  tried(t: Thing, victim: Doctor, attacker: string | null, amount: number): void {
+    if (!this.live || !victim.alive || victim.id === attacker || !(amount > 0)) return
+    t.triedLately = t.triedLately.filter((x) => x.t > this.time - 1)
+    const lastSecond = t.triedLately.filter((x) => x.victim === victim.id).reduce((s, x) => s + x.amount, 0)
+    const take = Math.min(HIT_CAP, amount, PER_SECOND_CAP - lastSecond)
+    if (take <= 0) return
+    t.triedLately.push({ victim: victim.id, t: this.time, amount: take })
+    t.tried += take
+  }
+
   /** Takes credibility as it is, past every rule (what harm leaves of a blow, or a fall out), shown over the victim's head; at none left they are out. */
   private take(victim: Doctor, amount: number, src: Source): number {
     victim.cred = Math.max(0, Math.round((victim.cred - amount) * 10) / 10)
     victim.hurtAt = this.time
+    victim.withdrawing = 0
     this.emit({ type: 'hit', victim: victim.id, amount, at: rv(add(victim.pos, [0, (EYE + 0.35) * victim.size, 0])), by: src.attacker, what: src.what })
     if (victim.cred <= 0) this.out(victim, src)
     return amount
@@ -1162,7 +1202,7 @@ export class Sim {
     d.push = [v[0], 0, v[2]]
     d.vy = v[1]
     if (this.arena && p[1] < this.arena.floor && !rag.sunk) {
-      if (d.alive) return this.fallOut(d)
+      if (d.alive) return this.fallOut(d, 'a fall from the arena')
       return this.endRag(d)
     }
     const age = this.time - d.ragSince
@@ -1190,7 +1230,7 @@ export class Sim {
     // Shaken free while lying: free for the whole of it from now.
     if (this.time < d.freeUntil) d.freeUntil = this.time + HOLD_MAX
     d.flopFree = Math.max(d.flopFree, d.freeUntil, this.time + FLOP_REST)
-    if (!ground) return this.fallOut(d)
+    if (!ground) return this.fallOut(d, 'a fall from the arena')
     d.pos = [p[0], ground.y, p[2]]
     d.lastPos = [...d.pos]
     d.walk = [0, 0, 0]
@@ -1311,6 +1351,9 @@ export class Sim {
       disguise: null,
       origin: null,
       left: kind.uses,
+      worked: 0,
+      tried: 0,
+      triedLately: [],
       press: null,
       spent: null,
     }
@@ -1376,6 +1419,7 @@ export class Sim {
       if (name === 'release') t.press = null
     }
     t.left -= cost
+    t.worked += cost
     if (t.left <= 0) this.exhaust(t)
   }
 
@@ -1538,7 +1582,7 @@ export class Sim {
     if (thing) return this.give(d, thing)
     // A crate in reach still only its asker's: they are told whose, and for how long.
     const shut = [...this.crates.values()].find((c) => c.state === 'ready' && c.readyAt !== null && !this.mayOpen(c, d) && len(sub(c.p, add(d.pos, [0, 0.5, 0]))) < CRATE_REACH)
-    if (shut) this.emit({ type: 'notYet', who: d.id, owner: shut.owner, secs: Math.ceil(shut.readyAt! + CRATE_OWNER_ONLY - this.time) })
+    if (shut?.owner) this.emit({ type: 'notYet', who: d.id, owner: shut.owner, secs: Math.ceil(shut.readyAt! + CRATE_OWNER_ONLY - this.time) })
   }
 
   /**
@@ -1569,9 +1613,28 @@ export class Sim {
     for (let k = 0; k < 32 && !at; k++) {
       // crateSpot's angle runs from +x toward +z; yaw from +z toward +x.
       const angle = k < 8 ? Math.PI / 2 - d.yaw + (this.random() - 0.5) * 2 * CRATE_FRONT : this.random() * Math.PI * 2
-      at = this.crateSpot(d, angle, k < 24 ? 2.5 + this.random() * 2.5 : 1.3 + this.random() * 1.2)
+      at = this.crateSpot(d.pos, 1.2 * d.size, angle, k < 24 ? 2.5 + this.random() * 2.5 : 1.3 + this.random() * 1.2)
     }
     at ??= [d.pos[0], (this.groundBelow([d.pos[0], d.pos[1] + 1, d.pos[2]], 1 + CRATE_DROP)?.y ?? d.pos[1]) + CRATE_HALF + 0.02, d.pos[2]]
+    return this.newCrate(ownerId, at, ask)
+  }
+
+  /**
+   * A crate of the committee's, from the archive and anyone's once ready: it comes in a few metres
+   * from a spawn point, at random (where a doctor could stand, so where one can walk), clear as a
+   * doctor's crate is. Null when no spot was found.
+   */
+  dropCommitteeCrate(): Crate | null {
+    const spawns = this.arena?.spawns ?? []
+    for (let k = 0; k < 24 && spawns.length; k++) {
+      const s = spawns[Math.floor(this.random() * spawns.length)]!
+      const at = this.crateSpot(s.p, 1.2, this.random() * Math.PI * 2, 2 + this.random() * 5)
+      if (at) return this.newCrate(null, at, null)
+    }
+    return null
+  }
+
+  private newCrate(owner: string | null, at: Vec3, ask: string | null): Crate {
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(at[0], at[1], at[2]))
     const collider = this.world.createCollider(RAPIER.ColliderDesc.cuboid(CRATE_HALF, CRATE_HALF, CRATE_HALF).setCollisionGroups(groups(G.CRATE, ALL)), body)
     collider.setEnabled(false)
@@ -1579,7 +1642,7 @@ export class Sim {
     const words = ask === null ? null : [...ask.trim()]
     const c: Crate = {
       id: this.nextId('c'),
-      owner: ownerId,
+      owner,
       body,
       p: at,
       state: 'arriving',
@@ -1596,19 +1659,20 @@ export class Sim {
   }
 
   /**
-   * Where a crate can come in for a doctor, r metres off at an angle, so that they can walk to it:
-   * nothing of the arena across the way at chest height (nor just past it), a floor there flat
-   * enough to stand on, at most a jump above their feet and a short drop below, and room for the
-   * crate, clear of the arena, of doctors and of other crates. Its middle, or null.
+   * Where a crate can come in for someone standing at feet (their chest this far above), r metres
+   * off at an angle, so that they can walk to it: nothing of the arena across the way at chest
+   * height (nor just past it), a floor there flat enough to stand on, at most a jump above their
+   * feet and a short drop below, and room for the crate, clear of the arena, of doctors and of
+   * other crates. Its middle, or null.
    */
-  private crateSpot(d: Doctor, angle: number, r: number): Vec3 | null {
-    const chest = d.pos[1] + 1.2 * d.size
+  private crateSpot(feet: Vec3, chestUp: number, angle: number, r: number): Vec3 | null {
+    const chest = feet[1] + chestUp
     const dir: Vec3 = [Math.cos(angle), 0, Math.sin(angle)]
-    const x = d.pos[0] + dir[0] * r
-    const z = d.pos[2] + dir[2] * r
-    if (!this.clear([d.pos[0], chest, d.pos[2]], [x + dir[0] * (CRATE_HALF + 0.1), chest, z + dir[2] * (CRATE_HALF + 0.1)])) return null
-    const floor = this.groundBelow([x, chest, z], chest - d.pos[1] + CRATE_DROP)
-    if (!floor?.flat || floor.y > d.pos[1] + CRATE_RISE) return null
+    const x = feet[0] + dir[0] * r
+    const z = feet[2] + dir[2] * r
+    if (!this.clear([feet[0], chest, feet[2]], [x + dir[0] * (CRATE_HALF + 0.1), chest, z + dir[2] * (CRATE_HALF + 0.1)])) return null
+    const floor = this.groundBelow([x, chest, z], chest - feet[1] + CRATE_DROP)
+    if (!floor?.flat || floor.y > feet[1] + CRATE_RISE) return null
     const mid: Vec3 = [x, floor.y + CRATE_HALF + 0.02, z]
     for (const o of this.crates.values()) if (Math.abs(o.p[0] - x) < 2 * CRATE_HALF + 0.2 && Math.abs(o.p[2] - z) < 2 * CRATE_HALF + 0.2 && Math.abs(o.p[1] - mid[1]) < 2 * CRATE_HALF) return null
     const box = new RAPIER.Cuboid(CRATE_HALF - 0.01, CRATE_HALF - 0.01, CRATE_HALF - 0.01)
@@ -1630,9 +1694,11 @@ export class Sim {
     }
   }
 
-  /** Whether a doctor may open a crate now: it is ready, and theirs or ready for CRATE_OWNER_ONLY seconds of a live round. */
+  /** Whether a doctor may open a crate now: it is ready, and theirs, or ready for CRATE_OWNER_ONLY seconds of a live round, or the committee's in a live round. */
   mayOpen(c: Crate, d: Doctor): boolean {
-    return c.state === 'ready' && (c.owner === d.id || (c.readyAt !== null && this.time >= c.readyAt + CRATE_OWNER_ONLY))
+    if (c.state !== 'ready') return false
+    if (c.owner === null) return c.readyAt !== null
+    return c.owner === d.id || (c.readyAt !== null && this.time >= c.readyAt + CRATE_OWNER_ONLY)
   }
 
   /** The round goes live: a crate that turned ready in the countdown, when nobody could open it, is its asker's alone from now. */
@@ -1641,10 +1707,14 @@ export class Sim {
     for (const c of this.crates.values()) if (c.state === 'ready') c.readyAt ??= this.time
   }
 
-  private openCrate(c: Crate, d: Doctor): void {
+  private removeCrate(c: Crate): void {
     this.crates.delete(c.id)
     this.owners.delete(c.body.collider(0).handle)
     this.world.removeRigidBody(c.body)
+  }
+
+  private openCrate(c: Crate, d: Doctor): void {
+    this.removeCrate(c)
     this.emit({ type: 'burst', at: [...c.p], color: '#c8a26a', size: 1, count: 18, glow: false })
     this.emit({ type: 'sound', at: [...c.p], sound: 'crunch', pitch: 1 })
     const t = this.newThing(c.kind!, d, c.p)
@@ -1693,6 +1763,13 @@ export class Sim {
   }
 
   private stepCrate(c: Crate, dt: number): void {
+    // Left unopened too long: gone, its thing with it.
+    if (c.state === 'ready' && c.readyAt !== null && this.time >= c.readyAt + CRATE_GONE) {
+      this.removeCrate(c)
+      this.emit({ type: 'puff', at: [...c.p], color: '#8a8478', size: 1.6, secs: 1.2, rise: 0.5, glow: false })
+      this.emit({ type: 'sound', at: [...c.p], sound: 'teleport', pitch: 1.3, volume: 0.6 })
+      return
+    }
     if (c.state !== 'arriving') return
     c.arrived = Math.min(1, c.arrived + dt / CRATE_WARP)
     if (c.arrived < 1) return
@@ -1959,7 +2036,7 @@ export class Sim {
         }
       }
     }
-    for (const c of this.crates.values()) this.stepCrate(c, dt)
+    for (const c of [...this.crates.values()]) this.stepCrate(c, dt)
     for (const b of this.bodies.values()) {
       const v = b.rb.linvel()
       b.velBefore = b.vel
@@ -2090,7 +2167,7 @@ export class Sim {
       arrived: Math.round(c.arrived * 100) / 100,
       ask: c.ask,
       archive: c.made !== null && c.made.archive,
-      ownerUntil: c.readyAt === null ? null : r3(c.readyAt + CRATE_OWNER_ONLY),
+      ownerUntil: c.readyAt === null ? null : r3(c.readyAt + (c.owner === null ? 0 : CRATE_OWNER_ONLY)),
     }))
     const movers: MoverSnap[] = this.arena ? [...this.arena.movers.values()].map((m) => ({ id: m.id, p: rv(v3(m.rb.translation())), q: rq(m.rb.rotation()) })) : []
     const end = (r: TieRef): TieEnd => (r.kind === 'point' ? { kind: 'point', p: rv(r.p) } : { kind: r.kind, id: r.id })
@@ -2123,13 +2200,15 @@ export class Sim {
   }
 
   /** What only this player sees, from the sim's side. */
-  me(id: string): Pick<Me, 'curse' | 'hands'> {
+  me(id: string): Pick<Me, 'curse' | 'hands' | 'withdraw'> {
     const d = this.doctors.get(id)
-    if (!d) return { curse: null, hands: [null, null] }
-    const info = (t: Thing | null): HeldInfo | null => (t ? { name: t.kind.name, description: t.kind.description, budget: t.kind.budget, left: t.left, origin: t.origin } : null)
+    if (!d) return { curse: null, hands: [null, null], withdraw: 0 }
+    const info = (t: Thing | null): HeldInfo | null =>
+      t ? { name: t.kind.name, description: t.kind.description, click: t.kind.click, shift: t.kind.shift, budget: t.kind.budget, left: t.left, uses: t.kind.uses, origin: t.origin } : null
     return {
       curse: d.curse ? { text: d.curse.text, by: d.curse.by } : null,
       hands: [info(this.inHand(d, 0)), info(this.inHand(d, 1))],
+      withdraw: Math.round(Math.min(1, d.withdrawing / WITHDRAW) * 100) / 100,
     }
   }
 

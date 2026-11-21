@@ -5,7 +5,7 @@
  * Worn parts are built in the frames below and drawn in them, scaled with the doctor.
  */
 
-import { GAITS, type Look, type Slot, type Vec3 } from './protocol'
+import { GAITS, type Cover, type Look, type Slot, type Vec3 } from './protocol'
 
 export const BODY = {
   height: 1.75,
@@ -23,7 +23,8 @@ export const SLOT_FRAMES: Record<Slot, { origin: Vec3; about: string }> = {
   hair: { origin: [0, 1.6, 0], about: 'the middle of the head: a ball of radius 0.13, the face toward +z (eyes at z 0.115, y 0.02, 0.045 apart each side), the top of the head at y 0.13, the neck below at y -0.14' },
   head: { origin: [0, 1.6, 0], about: 'the middle of the head, as for hair: a hat sits on the top at y 0.13, over any hair' },
   face: { origin: [0, 1.6, 0], about: 'the middle of the head, as for hair: the face is its front, z 0.1 to 0.14, from y -0.1 (chin) to 0.07 (brow)' },
-  body: { origin: [0, 0, 0], about: 'between the feet on the ground: hips at y 0.92, the arms hanging from the shoulders at y 1.42, x ±0.22. A lab coat from the hem at y 0.42 up to the neck at y 1.5, round a trunk 0.37 wide at the chest (y 1.28, its front at z 0.15, its back at z -0.13), 0.49 wide over the shoulders, and below the waist (y 1.0) flaring to 0.42 wide and 0.32 deep at the hem. It goes with the trunk as it bends, while the legs and arms move on their own' },
+  clothes: { origin: [0, 0, 0], about: 'between the feet on the ground, as for the body: the doctor\'s clothing, worn in place of their own lab coat. Fit it where the coat is, round the same trunk: 0.37 wide at the chest (y 1.28, its front at z 0.15, its back at z -0.13), 0.35 wide at the waist (y 1.0), 0.49 wide over the shoulders, the neck at y 1.5; the hips at y 0.92 and the legs below them, the arms hanging from the shoulders at y 1.42, x ±0.22. It goes with the trunk as it bends, while the legs and arms move on their own' },
+  body: { origin: [0, 0, 0], about: 'between the feet on the ground, worn over the clothes (the lab coat, or the clothing in its place): hips at y 0.92, the arms hanging from the shoulders at y 1.42, x ±0.22. A lab coat from the hem at y 0.42 up to the neck at y 1.5, round a trunk 0.37 wide at the chest (y 1.28, its front at z 0.15, its back at z -0.13), 0.49 wide over the shoulders, and below the waist (y 1.0) flaring to 0.42 wide and 0.32 deep at the hem. It goes with the trunk as it bends, while the legs and arms move on their own' },
   back: { origin: [0, 1.25, -0.13], about: 'between the shoulder blades, the back facing -z: the shoulders are at y 0.17 and x ±0.22' },
   feet: { origin: [0.1, 0, 0], about: 'on the ground under the left ankle, toes toward +z, the outer side toward +x: the foot is 0.12 wide and 0.1 high, from the heel at z -0.1 to the toes at z 0.19, the trouser leg ending just above it at y 0.04. The code makes the left foot and the right wears it mirrored; it moves with each foot and takes the place of the shoes' },
 }
@@ -96,11 +97,12 @@ export function botName(random: () => number, taken: ReadonlySet<string>): strin
 }
 
 /** The game's own wardrobe parts, written as the look designer writes them (the body of function (m), in the slot's frame). */
-export const STARTER_WEAR: { id: string; name: string; slot: Slot; code: string }[] = [
+export const STARTER_WEAR: { id: string; name: string; slot: Slot; covers: Cover[]; code: string }[] = [
   {
     id: 'wild-white-hair',
     name: 'Wild white hair',
     slot: 'hair',
+    covers: [],
     code: `const c = '#f2f0ea'
 m.sphere(0.135, { at: [0, 0.03, -0.02], scale: [1, 0.8, 1], color: c })
 for (let i = 0; i < 9; i++) {
@@ -113,6 +115,7 @@ for (let i = 0; i < 9; i++) {
     id: 'slick-parting',
     name: 'Slick parting',
     slot: 'hair',
+    covers: [],
     code: `m.sphere(0.138, { at: [0, 0.035, -0.015], scale: [1, 0.78, 1.02], color: '#2a1e18' })
 m.box(0.005, 0.02, 0.2, { at: [0.04, 0.142, 0], color: '#f3d2b3' })`,
   },
@@ -120,6 +123,7 @@ m.box(0.005, 0.02, 0.2, { at: [0.04, 0.142, 0], color: '#f3d2b3' })`,
     id: 'tight-bun',
     name: 'Tight bun',
     slot: 'hair',
+    covers: [],
     code: `m.sphere(0.137, { at: [0, 0.035, -0.02], scale: [1, 0.8, 1], color: '#6a3a1e' })
 m.sphere(0.065, { at: [0, 0.1, -0.13], color: '#6a3a1e' })`,
   },
@@ -127,6 +131,7 @@ m.sphere(0.065, { at: [0, 0.1, -0.13], color: '#6a3a1e' })`,
     id: 'round-goggles',
     name: 'Round goggles',
     slot: 'face',
+    covers: [],
     code: `for (const x of [-0.05, 0.05]) {
   m.torus(0.035, 0.012, { at: [x, 0.025, 0.13], color: '#b08a3c' })
   m.cylinder(0.03, 0.03, 0.01, { at: [x, 0.025, 0.13], rot: [Math.PI / 2, 0, 0], color: '#9fd8e8' })
@@ -137,6 +142,7 @@ m.torus(0.135, 0.008, { at: [0, 0.025, 0], rot: [Math.PI / 2, 0, 0], color: '#2a
     id: 'monocle',
     name: 'Monocle',
     slot: 'face',
+    covers: [],
     code: `m.torus(0.035, 0.006, { at: [0.045, 0.02, 0.128], color: '#e2b33c' })
 m.part('chain', { at: [0.08, 0, 0.125] }, () => m.tube([[0, 0, 0], [0.02, -0.08, -0.025], [0, -0.2, -0.005]], 0.003, { color: '#e2b33c' }))`,
   },
@@ -144,6 +150,7 @@ m.part('chain', { at: [0.08, 0, 0.125] }, () => m.tube([[0, 0, 0], [0.02, -0.08,
     id: 'mortarboard',
     name: 'Mortarboard',
     slot: 'head',
+    covers: [],
     code: `m.cylinder(0.13, 0.135, 0.07, { at: [0, 0.1, 0], color: '#1e1e24' })
 m.box(0.34, 0.02, 0.34, { at: [0, 0.145, 0], rot: [0, Math.PI / 4, 0], color: '#1e1e24' })
 m.sphere(0.014, { at: [0, 0.158, 0], color: '#e2b33c' })
@@ -160,13 +167,29 @@ m.part('tassel', { at: [0.25, 0.152, 0] }, () => {
     id: 'head-mirror',
     name: 'Head mirror',
     slot: 'head',
+    covers: [],
     code: `m.torus(0.137, 0.012, { at: [0, 0.06, 0], rot: [Math.PI / 2, 0, 0], color: '#2a2a30' })
 m.cylinder(0.05, 0.05, 0.01, { at: [0, 0.1, 0.15], rot: [Math.PI / 2 - 0.4, 0, 0], color: '#d8dde4' })`,
+  },
+  {
+    // The lab coat off: the doctor in their shirt, held up by braces (fitted to the trunk as it is
+    // drawn under clothing, UNDER as thick as the coat).
+    id: 'shirt-sleeves',
+    name: 'Shirt sleeves and braces',
+    slot: 'clothes',
+    covers: [],
+    code: `const c = '#3a2a1e'
+for (const s of [-1, 1]) {
+  m.tube([[s * 0.085, 1.0, 0.122], [s * 0.09, 1.2, 0.131], [s * 0.095, 1.35, 0.129], [s * 0.1, 1.46, 0.09], [s * 0.1, 1.52, 0], [s * 0.095, 1.46, -0.085], [s * 0.06, 1.33, -0.114], [0, 1.2, -0.116]], 0.009, { color: c })
+  m.box(0.03, 0.035, 0.012, { at: [s * 0.085, 1.01, 0.126], color: '#b08a3c' })
+}
+m.tube([[0, 1.2, -0.116], [0, 1.0, -0.112]], 0.011, { color: c })`,
   },
   {
     id: 'bow-tie',
     name: 'Bow tie',
     slot: 'body',
+    covers: [],
     code: `m.cone(0.04, 0.07, { at: [-0.035, 1.43, 0.135], rot: [0, 0, -Math.PI / 2], color: '#a02a3a' })
 m.cone(0.04, 0.07, { at: [0.035, 1.43, 0.135], rot: [0, 0, Math.PI / 2], color: '#a02a3a' })
 m.sphere(0.018, { at: [0, 1.43, 0.14], color: '#7a1a2a' })`,
@@ -175,6 +198,7 @@ m.sphere(0.018, { at: [0, 1.43, 0.14], color: '#7a1a2a' })`,
     id: 'tesla-pack',
     name: 'Tesla pack',
     slot: 'back',
+    covers: [],
     code: `m.box(0.3, 0.4, 0.14, { at: [0, 0, -0.08], color: '#5a4632' })
 for (const x of [-0.08, 0.08]) {
   m.part('coil', { at: [x, 0.18, -0.08] }, () => {

@@ -1,13 +1,14 @@
 /**
  * The page's side of the WebSocket: it says hello with this browser's key and profile, keeps
- * what the server sends (the lobby, the arena, the models, the wardrobe, the last snapshots),
+ * what the server sends (the lobby, the arena, the models, the wardrobe, the last snapshots, the
+ * tally),
  * hands snapshot events to whoever listens, and reconnects when the socket drops (a new game
  * after the server's code changed, or the host's computer waking up). The profile (name, title, look,
  * voice) lives in this browser's localStorage and goes with every hello.
  */
 
 import { randomLook } from './doctor'
-import { WS_PATH, type ArenaView, type ClientMsg, type GameEvent, type Input, type Lobby, type Me, type Profile, type Recipe, type ServerMsg, type Snap, type Vec3, type VoiceName, type WardrobePart } from './protocol'
+import { WS_PATH, type ArenaView, type ClientMsg, type GameEvent, type Input, type Lobby, type Me, type Profile, type Recipe, type ServerMsg, type Snap, type Stats, type Vec3, type VoiceName, type WardrobePart } from './protocol'
 
 const KEY = 'dissertation-key'
 const PROFILE = 'dissertation-profile'
@@ -56,6 +57,8 @@ export class Net {
   /** The newest snapshots, oldest first. */
   readonly snaps: Received[] = []
   me: Me | null = null
+  /** The round's and the match's tally. */
+  stats: Stats | null = null
   profile: Profile
   connected = false
   refused: string | null = null
@@ -141,6 +144,9 @@ export class Net {
       case 'note':
         this.note = { text: msg.text, until: performance.now() + 6000 }
         break
+      case 'stats':
+        this.stats = msg.stats
+        break
       case 'refused':
         this.refused = msg.why
         break
@@ -186,6 +192,11 @@ export class Net {
 
   latest(): Received | null {
     return this.snaps.at(-1) ?? null
+  }
+
+  /** A player's name: as the lobby has it, else as the tally kept it (they may have gone). */
+  name(id: string): string {
+    return this.player(id)?.name || this.stats?.names[id] || 'someone'
   }
 
   player(id: string) {

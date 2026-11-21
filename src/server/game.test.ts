@@ -96,7 +96,7 @@ describe('the game', () => {
     b.send({ type: 'ready', ready: true })
     advance(COUNTDOWN + 0.5)
     const you = a.conn.last('welcome')!.you
-    a.send({ type: 'input', input: { move: [0, 1], yaw: 0, pitch: 0, jump: false, hands: [false, false], presses: { use: [0, 0], other: [0, 0], throw: [0, 0], pick: 0, jump: 0 } } })
+    a.send({ type: 'input', input: { move: [0, 1], yaw: 0, pitch: 0, jump: false, hands: [false, false], withdraw: false, presses: { use: [0, 0], other: [0, 0], throw: [0, 0], pick: 0, jump: 0 } } })
     advance(0.5)
     a.close()
     advance(3)
@@ -127,8 +127,8 @@ describe('the game', () => {
     await flush()
     advance(8)
     const snap = a.conn.last('snap')!
-    // Beside the two brought to the doctors' defence, the one asked for.
-    expect(snap.snap.crates).toHaveLength(3)
+    // Beside the two brought to the doctors' defence, the one asked for (and the committee's own, anyone's).
+    expect(snap.snap.crates.filter((c) => c.owner !== null)).toHaveLength(3)
     expect(snap.snap.crates.find((c) => c.ask === 'a very long spoon')!.state).toBe('ready')
     expect([...game.kinds.keys()]).toContain([...store.things.values()].find((t) => t.ask === 'a very long spoon')!.id)
     // A second request waits for the cooldown.
@@ -184,6 +184,38 @@ describe('the game', () => {
     expect(look.worn.head).toBe('tall-hat')
     expect(store.wear.has('tall-hat')).toBe(true)
     expect(a.conn.got.some((m) => m.type === 'wardrobe' && m.parts.some((p) => p.id === 'tall-hat'))).toBe(true)
+  })
+
+  it('dresses a doctor in clothing in place of their lab coat (and, as it says, their shirt and trousers), and tells the designer what is worn in place of which next time', async () => {
+    const designers = new FakeDesigners()
+    const { join, advance, store, game, logs } = setup(designers)
+    const a = join('Alice')
+    // The lab coat off is a choice in the wardrobe, from the start.
+    expect(logs.filter((l) => /wardrobe part/.test(l))).toEqual([])
+    expect(game.wardrobe.get('shirt-sleeves')).toMatchObject({ slot: 'clothes', covers: [] })
+    designers.nextWear = {
+      name: 'A red gown and a sash',
+      parts: [
+        { slot: 'clothes', name: 'Red gown', covers: ['shirt', 'trousers', 'socks'], form: 'A long fitted gown.', code: 'm.cylinder(0.25, 0.3, 1.3, { at: [0, 0.7, 0], color: "#c8102e" })' },
+        { slot: 'body', name: 'Sash', covers: ['shirt'], form: 'A sash across the chest.', code: 'm.box(0.05, 0.6, 0.02, { at: [0, 1.2, 0.16], color: "#ffd27a" })' },
+      ],
+      remove: [],
+    }
+    a.send({ type: 'dress', text: 'a red evening gown with a sash' })
+    await flush()
+    advance(0.1)
+    expect(a.conn.last('profile')!.profile.look.worn).toMatchObject({ clothes: 'red-gown', body: 'sash' })
+    expect(store.wear.get('red-gown')!.covers).toEqual(['shirt', 'trousers'])
+    // Only clothing takes the place of the doctor's own clothes.
+    expect(game.wardrobe.get('sash')!.covers).toEqual([])
+    a.send({ type: 'dress', text: 'my lab coat back, please' })
+    await flush()
+    advance(0.1)
+    expect(designers.asked.at(-1)!.message).toMatch(/wearing clothes: Red gown \(in place of their own lab coat, shirt, trousers\), body: Sash\./)
+    const b = join('Bob')
+    b.send({ type: 'dress', text: 'a hat' })
+    await flush()
+    expect(designers.asked.at(-1)!.message).toMatch(/wearing their own lab coat\./)
   })
 
   it('never says the same taunt twice, and an empty title is written for the player', async () => {
@@ -326,8 +358,8 @@ describe('the game', () => {
     expect(a.conn.last('arena')!.arena!.name).toBe('The Old Lecture Hall')
     a.send({ type: 'random' })
     advance(8)
-    // The two at the doctors' spawns and the one asked for, all from the archive.
-    expect(a.conn.last('snap')!.snap.crates.map((c) => [c.state, c.archive])).toEqual([
+    // The two at the doctors' spawns and the one asked for, all from the archive (the committee's too, left out).
+    expect(a.conn.last('snap')!.snap.crates.filter((c) => c.owner !== null).map((c) => [c.state, c.archive])).toEqual([
       ['ready', true],
       ['ready', true],
       ['ready', true],

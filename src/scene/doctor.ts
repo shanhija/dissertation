@@ -73,6 +73,31 @@ import {
   drape,
 } from './figure'
 import { ModelInstance, wornInstance } from './models'
+
+/**
+ * Under a part that takes the place of the doctor's own coat, shirt or trousers, the body is drawn
+ * this much as thick as they were about its own axis, so what is fitted where they were stays
+ * outside it (2026-11-21: a dress Opus fitted to the coat's measures was cut through by the trunk,
+ * a rounded square that bulges past a round shell at its corners).
+ */
+const UNDER = 0.86
+const slimmed = new Map<BufferGeometry, BufferGeometry>()
+/** A geometry UNDER as thick about its upright axis, its skin weights as they were (made once for every doctor). */
+function slimmer(g: BufferGeometry): BufferGeometry {
+  let out = slimmed.get(g)
+  if (!out) {
+    out = g.clone().applyMatrix4(new Matrix4().makeScale(UNDER, 1, UNDER))
+    slimmed.set(g, out)
+  }
+  return out
+}
+
+/** A mesh of the doctor's own clothes drawn slimmer under a part that covers them: a skinned one by its geometry, another by its scale and its place about the axis. */
+interface Fitted {
+  mesh: Mesh
+  full: BufferGeometry
+  at: Vector3
+}
 import { Swing, type Fence } from './swing'
 import { PAINT_DOCTOR, harmonize, harmonizedHex, paint } from './paint'
 import { LABEL_LAYER } from './post'
@@ -83,14 +108,14 @@ const HOLD = { eye: 1.55, right: 0.28, down: 0.28, ahead: 0.5 }
 
 /**
  * The body a worn part may not swing into, in each slot's frame: the trunk (the coat round the
- * back and sides, the shirt in front) for what is worn on the body and back, the head for what is
- * worn on it, nothing for the feet.
+ * back and sides, the shirt in front) for clothing and what is worn on the body and back, the head
+ * for what is worn on it, nothing for the feet.
  */
 const TRUNK = { x: 0, z: 0, rx: 0.2, rz: 0.145 }
 const SKULL = { x: 0, z: 0, rx: 0.12, rz: 0.12 }
 const FENCES = Object.fromEntries(
   SLOTS.map((s) => {
-    const round = s === 'feet' ? null : s === 'body' || s === 'back' ? TRUNK : SKULL
+    const round = s === 'feet' ? null : s === 'clothes' || s === 'body' || s === 'back' ? TRUNK : SKULL
     const o = SLOT_FRAMES[s].origin
     return [s, round && { ...round, x: round.x - o[0], z: round.z - o[2] }]
   }),
@@ -416,6 +441,15 @@ export class DoctorMesh {
   private readonly wornGroups: Record<Slot, Group[]>
   /** The shoes, hidden while something is worn on the feet. */
   private readonly shoes: Mesh[] = []
+  /**
+   * The doctor's own clothes, as a worn part may take their place (Cover): the coat's trunk and
+   * sleeves, in the coat, else the shirt, else bare; the coat's own trim (lapels, pocket, pens,
+   * buttons, the skirt), gone with it; the shirt in the V, else bare; the shirt's buttons and cuffs,
+   * gone with it; the trousers, else bare legs.
+   */
+  private readonly clothes = { coat: [] as Mesh[], coatTrim: [] as Mesh[], shirt: [] as Mesh[], shirtTrim: [] as Mesh[], trousers: [] as Mesh[] }
+  /** What is drawn slimmer (UNDER) once the coat is covered (the trunk, the sleeves, the shirt on them), and once the trousers are (the legs; the seat goes by build). */
+  private readonly fitted = { coat: [] as Fitted[], trousers: [] as Fitted[] }
   /** Each ankle's group for what is worn on the feet, built before the slots are. */
   private readonly feetAt: Group[] = []
   private lookKey = ''
@@ -511,6 +545,7 @@ export class DoctorMesh {
     this.body.add(this.pelvis)
     this.hipsMesh = new Mesh(SEAT, m.trousers)
     this.pelvis.add(this.hipsMesh)
+    this.clothes.trousers.push(this.hipsMesh)
     for (const side of [-1, 1]) {
       const hip = new Group()
       hip.position.set(side * JOINTS.hipX, 0, 0)
@@ -530,8 +565,11 @@ export class DoctorMesh {
       this.feetAt.push(feet)
       knee.add(ankle)
       const shin = fleshOf(knee)
-      shin.add(new Mesh(KNEE, m.trousers))
+      const kneeCap = new Mesh(KNEE, m.trousers)
+      shin.add(kneeCap)
       const leg = new SkinnedMesh(TROUSER_LEG, m.trousers)
+      this.clothes.trousers.push(kneeCap, leg)
+      this.fitted.trousers.push(...[kneeCap, leg].map((mesh) => ({ mesh, full: mesh.geometry, at: mesh.position.clone() })))
       hip.add(leg, knee)
       skinned.push({ mesh: leg, joints: [fleshOf(hip), shin], seen: new Sphere(new Vector3(), 1) })
       this.pelvis.add(hip)
@@ -553,17 +591,26 @@ export class DoctorMesh {
     const coatJoints = [this.skirt, this.chest]
     skinned.push({ mesh: coat, joints: coatJoints, seen: new Sphere(new Vector3(0, 1.2, 0), 0.6) })
     // The coat's front: the shirt in its V, the lapels, the breast pocket with its pens, buttons.
-    const front: Mesh[] = [coat, new Mesh(SHIRT, m.shirt), new Mesh(LAPELS, m.coat), new Mesh(BREAST_POCKET, m.coat)]
-    PEN_AT.forEach((at, i) => front.push(new Mesh(PEN, PENS[i]!).translateX(at.x).translateY(at.y).translateZ(at.z)))
-    for (const at of [...COAT_BUTTONS, ...SHIRT_BUTTONS]) front.push(new Mesh(BUTTON, WHITE).translateX(at.x).translateY(at.y).translateZ(at.z))
-    for (const mesh of front) {
+    const shirt = new Mesh(SHIRT, m.shirt)
+    const trim = [new Mesh(LAPELS, m.coat), new Mesh(BREAST_POCKET, m.coat), ...PEN_AT.map((at, i) => new Mesh(PEN, PENS[i]!).translateX(at.x).translateY(at.y).translateZ(at.z))]
+    const button = (at: Vector3) => new Mesh(BUTTON, WHITE).translateX(at.x).translateY(at.y).translateZ(at.z)
+    trim.push(...COAT_BUTTONS.map(button))
+    const shirtButtons = SHIRT_BUTTONS.map(button)
+    this.clothes.coat.push(coat)
+    this.clothes.coatTrim.push(...trim)
+    this.clothes.shirt.push(shirt)
+    this.clothes.shirtTrim.push(...shirtButtons)
+    for (const mesh of [coat, shirt, ...trim, ...shirtButtons]) {
       mesh.position.y -= w
       this.chest.add(mesh)
     }
+    this.fitted.coat.push(...[coat, shirt, ...shirtButtons].map((mesh) => ({ mesh, full: mesh.geometry, at: mesh.position.clone() })))
     // Its own copy of the skirt to drape, seen wherever the hem may swing.
     this.skirtGeometry.computeBoundingSphere()
     this.skirtGeometry.boundingSphere!.radius += 0.35
-    this.skirt.add(new Mesh(this.skirtGeometry, m.coat))
+    const skirt = new Mesh(this.skirtGeometry, m.coat)
+    this.skirt.add(skirt)
+    this.clothes.coatTrim.push(skirt)
 
     // Neck and head: the head turns at the neck.
     this.neck.position.y = JOINTS.neck - w
@@ -616,8 +663,13 @@ export class DoctorMesh {
       wrist.add(hand)
       elbow.add(wrist)
       const forearm = fleshOf(elbow)
-      forearm.add(new Mesh(ELBOW, m.coat), new Mesh(CUFF, m.shirt))
+      const elbowCap = new Mesh(ELBOW, m.coat)
+      const cuff = new Mesh(CUFF, m.shirt)
+      forearm.add(elbowCap, cuff)
       const sleeve = new SkinnedMesh(SLEEVE, m.coat)
+      this.clothes.coat.push(elbowCap, sleeve)
+      this.clothes.shirtTrim.push(cuff)
+      this.fitted.coat.push(...[elbowCap, cuff, sleeve].map((mesh) => ({ mesh, full: mesh.geometry, at: mesh.position.clone() })))
       shoulder.add(sleeve, elbow)
       const upperArm = fleshOf(shoulder)
       skinned.push({ mesh: sleeve, joints: [upperArm, forearm], seen: new Sphere(new Vector3(), 0.75) })
@@ -634,7 +686,7 @@ export class DoctorMesh {
       const g = this.wornGroups[s][0]!
       if (s === 'hair' || s === 'head' || s === 'face') this.head.add(g)
       else {
-        // Body and back parts go with the trunk, in the body's frame.
+        // Clothing, body and back parts go with the trunk, in the body's frame.
         const o = SLOT_FRAMES[s].origin
         g.position.set(o[0], o[1] - w, o[2])
         this.spine.add(g)
@@ -680,10 +732,15 @@ export class DoctorMesh {
     // Build widens the trunk and moves the arms and legs out; the head and what it wears stay as they are.
     this.chest.scale.set(look.build, 1, look.build)
     this.skirt.scale.set(look.build, 1, look.build)
-    this.hipsMesh.scale.set(look.build, 1, look.build)
+    // What the worn parts take the place of: the coat, under any clothing; the shirt under it, the trousers, as parts say.
+    const clothing = look.worn.clothes ? wardrobe.has(look.worn.clothes) : false
+    const covered = new Set<string>([...(clothing ? ['coat'] : []), ...SLOTS.flatMap((s) => (look.worn[s] ? (wardrobe.get(look.worn[s]!)?.covers ?? []) : []))])
+    const seat = look.build * (covered.has('trousers') ? UNDER : 1)
+    this.hipsMesh.scale.set(seat, 1, seat)
     for (const g of this.flesh) g.scale.set(look.build, 1, look.build)
     this.shoulders.forEach((a, i) => (a.position.x = (i === 0 ? -1 : 1) * BODY.shoulders.half * look.build))
     this.hips.forEach((l, i) => (l.position.x = (i === 0 ? -1 : 1) * JOINTS.hipX * look.build))
+    this.wornGroups.clothes[0]!.scale.set(look.build, 1, look.build)
     this.wornGroups.body[0]!.scale.set(look.build, 1, look.build)
     this.wornGroups.back[0]!.scale.set(look.build, 1, 1)
     for (const s of SLOTS) {
@@ -705,6 +762,22 @@ export class DoctorMesh {
       }
     }
     for (const m of this.shoes) m.visible = !this.worn.has('feet')
+    for (const cover of ['coat', 'trousers'] as const) {
+      const k = covered.has(cover) ? UNDER : 1
+      for (const f of this.fitted[cover]) {
+        if (f.mesh instanceof SkinnedMesh) f.mesh.geometry = k === 1 ? f.full : slimmer(f.full)
+        else {
+          f.mesh.scale.set(k, 1, k)
+          f.mesh.position.set(f.at.x * k, f.at.y, f.at.z * k)
+        }
+      }
+    }
+    const under = covered.has('shirt') ? this.mats.skin : this.mats.shirt
+    for (const mesh of this.clothes.coat) mesh.material = covered.has('coat') ? under : this.mats.coat
+    for (const mesh of this.clothes.coatTrim) mesh.visible = !covered.has('coat')
+    for (const mesh of this.clothes.shirt) mesh.material = under
+    for (const mesh of this.clothes.shirtTrim) mesh.visible = !covered.has('shirt')
+    for (const mesh of this.clothes.trousers) mesh.material = covered.has('trousers') ? this.mats.skin : this.mats.trousers
     // Over the top of whatever the head wears (a tall hat stood through the tag).
     const crown = Math.max(0, ...(['hair', 'head'] as const).map((s) => (this.worn.get(s)?.[0]!.inst.recipe.bounds.max[1] ?? 0) - BODY.head.radius))
     const top = this.height + crown * h
@@ -713,13 +786,13 @@ export class DoctorMesh {
   }
 
   /**
-   * The name tag: the name in the player's colour and a bar of credibility under it; or, for a
-   * doctor neither near nor looked at, a pip in their colour, so a room of doctors is not a
-   * wall of names.
+   * The name tag: the name in the player's colour and a bar of credibility under it, a gold star
+   * before the name of whoever leads the match; or, for a doctor neither near nor looked at, a pip
+   * in their colour (gold-rimmed for the leader), so a room of doctors is not a wall of names.
    */
-  label(name: string, color: string, cred: number, full: boolean): void {
+  label(name: string, color: string, cred: number, full: boolean, leads: boolean): void {
     const c = Math.round(cred)
-    this.tag.draw(full ? `${name}|${color}|${c}` : `pip|${color}`, (g, w, h) => {
+    this.tag.draw(full ? `${name}|${color}|${c}|${leads}` : `pip|${color}|${leads}`, (g, w, h) => {
       const ink = 'rgba(20,14,10,0.9)'
       if (!full) {
         g.beginPath()
@@ -727,7 +800,7 @@ export class DoctorMesh {
         g.fillStyle = color
         g.fill()
         g.lineWidth = 4
-        g.strokeStyle = ink
+        g.strokeStyle = leads ? '#f2c94c' : ink
         g.stroke()
         return
       }
@@ -740,6 +813,20 @@ export class DoctorMesh {
       g.strokeText(name, w / 2, 38)
       g.fillStyle = color
       g.fillText(name, w / 2, 38)
+      if (leads) {
+        // A five-pointed star, drawn (the label's face may have no star of its own).
+        const [x, y, r] = [w / 2 - g.measureText(name).width / 2 - 20, 26, 13]
+        g.beginPath()
+        for (let i = 0; i < 10; i++) {
+          const a = -Math.PI / 2 + (i * Math.PI) / 5
+          g.lineTo(x + Math.cos(a) * (i % 2 ? r * 0.45 : r), y + Math.sin(a) * (i % 2 ? r * 0.45 : r))
+        }
+        g.closePath()
+        g.lineWidth = 5
+        g.stroke()
+        g.fillStyle = '#f2c94c'
+        g.fill()
+      }
       g.fillStyle = ink
       g.fillRect(w / 2 - 82, 52, 164, 18)
       g.fillStyle = c > 50 ? '#e8d9a8' : c > 25 ? '#e0a040' : '#e05040'

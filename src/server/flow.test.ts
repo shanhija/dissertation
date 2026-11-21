@@ -46,7 +46,7 @@ const far = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[2] - b[2])
 
 /** E pressed: the n-th pick of this page. */
 const pick = (p: Player, n: number) =>
-  p.send({ type: 'input', input: { move: [0, 0], yaw: 0, pitch: 0, jump: false, hands: [false, false], presses: { use: [0, 0], other: [0, 0], throw: [0, 0], pick: n, jump: 0 } } })
+  p.send({ type: 'input', input: { move: [0, 0], yaw: 0, pitch: 0, jump: false, hands: [false, false], withdraw: false, presses: { use: [0, 0], other: [0, 0], throw: [0, 0], pick: n, jump: 0 } } })
 
 /** A doctor put beside a crate, in reach of it, on its side away from the nearest other crate (which may have come in close by), so E opens this one. */
 function beside(game: Game, p: Player, crate: string): void {
@@ -291,9 +291,9 @@ describe('bringing a thing to one’s defence', () => {
     expect(sim.crates.size).toBe(7)
     for (const c of sim.crates.values()) {
       expect(c.state).toBe('ready')
-      expect(far(c.p, stood.get(c.owner)!)).toBeGreaterThan(1.2)
-      expect(far(c.p, stood.get(c.owner)!)).toBeLessThan(5.5)
-      expect(far(sim.doctors.get(c.owner)!.pos, stood.get(c.owner)!)).toBeLessThan(0.05)
+      expect(far(c.p, stood.get(c.owner!)!)).toBeGreaterThan(1.2)
+      expect(far(c.p, stood.get(c.owner!)!)).toBeLessThan(5.5)
+      expect(far(sim.doctors.get(c.owner!)!.pos, stood.get(c.owner!)!)).toBeLessThan(0.05)
     }
   })
 

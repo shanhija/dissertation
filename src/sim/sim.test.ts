@@ -147,7 +147,7 @@ describe('the rules of harm', () => {
 
 describe('things', () => {
   it('the starter things compile and go through the trial without an error', () => {
-    for (const d of STARTERS) expect(trialThing(compileThing(d)), d.id).toEqual([])
+    for (const d of STARTERS) expect(trialThing(compileThing(d)).problems, d.id).toEqual([])
   })
 
   it('the red pen strikes the doctor it is aimed at', () => {

@@ -9,9 +9,12 @@
 
 import { PLAYER_COLORS, STARTER_WEAR, botName, cleanLook, randomLook } from '../doctor'
 import {
+  ARCHIVE_DROP,
+  CRATE_CLAIM,
   DESIGN_LIMIT,
   FIX_GRACE,
   MATCH_WINS,
+  COVERS,
   MAX_PLAYERS,
   NO_INPUT,
   COUNTDOWN,
@@ -22,8 +25,11 @@ import {
   SLOTS,
   USES,
   VOICES,
+  type ArenaChoice,
   type ArenaStatus,
   type ClientMsg,
+  type Cover,
+  type GameEvent,
   type Input,
   type Lobby,
   type Look,
@@ -32,9 +38,12 @@ import {
   type Phase,
   type PlayerInfo,
   type Profile,
+  type RecordRow,
   type ServerMsg,
   type Settings,
   type Slot,
+  type Stats,
+  type Tally,
   type VoiceName,
   type WardrobePart,
 } from '../protocol'
@@ -44,7 +53,7 @@ import { LECTURE_HALL } from '../sim/hall'
 import { Bot } from '../sim/bots'
 import { compile } from '../sim/sandbox'
 import { DT, Sim, type Made, type ThingKind } from '../sim/sim'
-import { STARTERS, compileThing, trialThing, type ThingDesign } from '../sim/things'
+import { STARTERS, compileThing, trialThing, usesFor, type ThingDesign } from '../sim/things'
 import type { Designers } from './opus'
 import { arenaMessage, linesMessage, thingMessage, wearMessage, type ThingAnswer, type WearAnswer } from './prompts'
 import { Store, lineKey, lineText, type ArenaDesign, type LineStock } from './store'
@@ -103,6 +112,8 @@ interface Player {
   defence: string | null
   /** The round they last wrote a review in. */
   reviewed: number
+  /** They played a round of this match (for the record's matches). */
+  played: boolean
 }
 
 interface Taunt {
@@ -141,6 +152,31 @@ interface Bring {
   job: CrateJob | null
 }
 
+/** A tally as the game keeps it (see Tally): what each took with each thing, for each one's best. */
+interface Book {
+  dealt: Map<string, number>
+  taken: Map<string, number>
+  dismissals: Map<string, { by: string | null; victim: string; n: number }>
+  byThing: Map<string, Map<string, number>>
+}
+
+const newBook = (): Book => ({ dealt: new Map(), taken: new Map(), dismissals: new Map(), byThing: new Map() })
+
+function tallyOf(b: Book): Tally {
+  const round1 = (n: number) => Math.round(n * 10) / 10
+  const best: Tally['best'] = {}
+  for (const [by, things] of b.byThing) {
+    const [thing, amount] = [...things].sort((x, y) => y[1] - x[1])[0]!
+    best[by] = { thing, amount: round1(amount) }
+  }
+  return {
+    dealt: Object.fromEntries([...b.dealt].map(([k, v]) => [k, round1(v)])),
+    taken: Object.fromEntries([...b.taken].map(([k, v]) => [k, round1(v)])),
+    dismissals: [...b.dismissals.values()],
+    best,
+  }
+}
+
 /** A thing designed from a request, and the thing had already this match the words asked for, when they did (it was made as something else). */
 interface Designed {
   kind: ThingKind
@@ -174,6 +210,10 @@ const ASIDE = 1 / 3
  * take at once no slower than one (2026-11-11), the rest left to outfits being made meanwhile.
  */
 const BRING_AT_ONCE = 2
+/** Kept arenas the last round's winner chooses from, besides Opus's new one. */
+const CHOICE_KEPT = 2
+/** Committee crates waiting at once, at most, per doctor still in. */
+const COMMITTEE_WAITING = 0.5
 const ARENA_TIMEOUT = 480_000
 /** Seconds an arena is expected to take while fewer than five are kept to measure by. */
 const ARENA_EXPECT = 180
@@ -229,6 +269,18 @@ export class Game {
   private had: { id: string; name: string; ask: string | null; drawn: boolean }[] = []
   /** Typed words being designed now: listed with the next words as counting as had, so two asking at once do not both get it. */
   private asking: string[] = []
+  /** When the next committee crate comes in (the game's clock; Infinity outside a live round). */
+  private committeeAt = Infinity
+  /** Crates asked for whose asker was told their claim passed (CRATE_CLAIM). */
+  private claimTold = new Set<string>()
+  /** This round's tally and this match's, the names in them, and whether they changed since sent (and when last sent). */
+  private roundBook = newBook()
+  private matchBook = newBook()
+  private names = new Map<string, string>()
+  private statsDirty = false
+  private statsSent = -10
+  /** The last round's winner's choice of the next arena, in the break; the kept arenas offered by id. */
+  private choice: ArenaChoice | null = null
   private lobbyDirty = true
   /** The lobby's timer as last sent, to send it again whenever it counts down. */
   private sentTimer: number | null = null
@@ -273,10 +325,11 @@ export class Game {
     return this.deps.clock()
   }
 
-  private addWear(w: { id: string; name: string; slot: Slot; code: string; ask: string; by: string }): WardrobePart | null {
+  private addWear(w: { id: string; name: string; slot: Slot; covers: Cover[]; code: string; ask: string; by: string }): WardrobePart | null {
     try {
+      if (!Array.isArray(w.covers) || !w.covers.every((c) => COVERS.includes(c))) throw new Error(`covers ${JSON.stringify(w.covers)} is not a list of ${COVERS.join(', ')}`)
       const { recipe } = recipeOf(compile('look', w.code))
-      const part: WardrobePart = { id: w.id, name: w.name, slot: w.slot, recipe, by: w.by, ask: w.ask }
+      const part: WardrobePart = { id: w.id, name: w.name, slot: w.slot, covers: w.covers, recipe, by: w.by, ask: w.ask }
       this.wardrobe.set(w.id, part)
       return part
     } catch (err) {
@@ -351,6 +404,7 @@ export class Game {
     this.send(p, { type: 'wardrobe', parts: [...this.wardrobe.values()] })
     this.sendProfile(p)
     if (this.sim) {
+      this.send(p, { type: 'stats', stats: this.stats() })
       this.send(p, { type: 'arena', arena: this.sim.arena!.view })
       this.send(p, { type: 'models', models: Object.fromEntries(this.sim.models) })
       if (!this.sim.doctors.has(p.id)) this.spectate(p)
@@ -387,6 +441,7 @@ export class Game {
       bring: null,
       defence: null,
       reviewed: 0,
+      played: false,
     }
     this.players.set(id, p)
     return p
@@ -440,6 +495,12 @@ export class Game {
       case 'bring':
         // Written in the dressing room for the round to come (a page's last word may land after it began).
         if (this.phase === 'dressing' && typeof msg.text === 'string') p.bringWords = msg.text.trim().slice(0, 400)
+        return
+      case 'chooseArena':
+        if (this.phase === 'dressing' && this.choice?.by === p.id && this.choice.options.some((o) => o.id === msg.id)) {
+          this.choice.chosen = msg.id
+          this.lobbyDirty = true
+        }
         return
       case 'review':
         if (typeof msg.target === 'string' && typeof msg.text === 'string' && msg.text.trim()) this.review(p, msg.target, msg.text.trim().slice(0, 200))
@@ -602,15 +663,22 @@ export class Game {
     let fix: { answer: WearAnswer; problems: string[] } | null = null
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
-        const wornNames = Object.fromEntries(Object.entries(p.look.worn).map(([s, id]) => [s, this.wardrobe.get(id)?.name ?? id]))
-        const a = await designers.wear(wearMessage({ ask: text, look: p.look, wornNames, fix }), WEAR_TIMEOUT)
+        const worn = Object.fromEntries(
+          Object.entries(p.look.worn).map(([s, id]) => {
+            const part = this.wardrobe.get(id)
+            return [s, { name: part?.name ?? id, covers: part?.covers ?? [] }]
+          }),
+        )
+        const a = await designers.wear(wearMessage({ ask: text, look: p.look, worn, fix }), WEAR_TIMEOUT)
         const problems: string[] = []
-        const built: { slot: Slot; name: string; code: string }[] = []
+        const built: { slot: Slot; name: string; covers: Cover[]; code: string }[] = []
         for (const part of Array.isArray(a.data.parts) ? a.data.parts : []) {
           if (!SLOTS.includes(part.slot as Slot)) continue
           try {
             recipeOf(compile('look', part.code))
-            built.push({ slot: part.slot as Slot, name: String(part.name).slice(0, 60), code: part.code })
+            // Only clothing takes the place of the doctor's own clothes.
+            const covers = part.slot === 'clothes' ? COVERS.filter((c) => Array.isArray(part.covers) && part.covers.includes(c)) : []
+            built.push({ slot: part.slot as Slot, name: String(part.name).slice(0, 60), covers, code: part.code })
           } catch (err) {
             problems.push(`${part.slot} "${part.name}": ${(err as Error).message}`)
           }
@@ -629,7 +697,7 @@ export class Game {
         const parts: WardrobePart[] = []
         for (const b of built) {
           const id = this.deps.store.freeId('wear', b.name)
-          const design = { id, name: b.name, slot: b.slot, code: b.code, ask: text, by: p.name, model: a.model, made: new Date().toISOString() }
+          const design = { id, name: b.name, slot: b.slot, covers: b.covers, code: b.code, ask: text, by: p.name, model: a.model, made: new Date().toISOString() }
           this.deps.store.saveWear(design)
           const part = this.addWear(design)
           if (part) {
@@ -640,7 +708,7 @@ export class Game {
         if (parts.length) this.broadcast({ type: 'wardrobe', parts })
         p.look = cleanLook(look, (id) => this.wardrobe.get(id)?.slot ?? null)
         this.sendProfile(p)
-        this.deps.store.append({ kind: 'wear', by: p.name, ask: text, model: a.model, ms: Math.round((this.now() - t0) * 1000), parts: parts.map((x) => x.id), problems })
+        this.deps.store.append({ kind: 'wear', by: p.name, ask: text, model: a.model, ms: Math.round((this.now() - t0) * 1000), parts: parts.map((x) => x.id), covers: parts.map((x) => x.covers), remove: a.data.remove, problems })
         this.note(p, problems.length ? `${a.data.name}: some of it would not build.` : `${a.data.name}.`)
         return
       }
@@ -684,9 +752,9 @@ export class Game {
     this.follow(job, design, { genie, curse })
   }
 
-  /** A crate the player asked for in this round is still coming or unopened (the one brought to their defence counts for nothing). */
+  /** A crate the player asked for in this round is still coming, or unopened and ready for less than CRATE_CLAIM (the one brought to their defence counts for nothing). */
   private crateComing(sim: Sim, p: Player): boolean {
-    return [...sim.crates.values()].some((c) => c.owner === p.id && c.id !== p.defence)
+    return [...sim.crates.values()].some((c) => c.owner === p.id && c.id !== p.defence && !(c.readyAt !== null && sim.time >= c.readyAt + CRATE_CLAIM))
   }
 
   /**
@@ -781,6 +849,8 @@ export class Game {
           id,
           name: String(answer.name).slice(0, 60),
           description: String(answer.description).slice(0, 200),
+          click: String(answer.click).slice(0, 40),
+          shift: String(answer.shift).slice(0, 40),
           budget: answer.budget === 20 ? 20 : 10,
           uses: Math.min(USES[1], Math.max(USES[0], Math.round(Number(answer.uses)))),
           look: String(answer.look),
@@ -794,13 +864,18 @@ export class Game {
         }
         let problems: string[]
         let kind: ThingKind | null = null
+        // The designer's uses, cut to what its trial measured a use to take.
+        const designed = design.uses
+        let perUse: number | null = null
         try {
           kind = compileThing(design)
-          problems = trialThing(kind)
+          ;({ problems, perUse } = trialThing(kind))
+          design.uses = usesFor(designed, perUse)
+          kind.uses = design.uses
         } catch (err) {
           problems = [(err as Error).message]
         }
-        this.deps.store.append({ kind: 'thing', by, ask, curse, genie, aside, again, model: a.model, ms: design.ms, id, name: design.name, uses: design.uses, problems, ...(problems.length ? { look: design.look, code: design.code } : {}) })
+        this.deps.store.append({ kind: 'thing', by, ask, curse, genie, aside, again, model: a.model, ms: design.ms, id, name: design.name, uses: design.uses, designed, perUse: perUse === null ? null : Math.round(perUse * 10) / 10, problems, ...(problems.length ? { look: design.look, code: design.code } : {}) })
         if (problems.length === 0 && kind) {
           this.deps.store.saveThing(design)
           this.archive.set(id, design)
@@ -995,17 +1070,35 @@ export class Game {
   private fallbackArena(): ArenaSource {
     const kept = [...this.deps.store.arenas.values()].filter((a) => a.id !== this.lastArena)
     while (kept.length) {
-      const a = kept.splice(Math.floor(this.deps.random() * kept.length), 1)[0]!
-      try {
-        const src = { id: a.id, name: a.name, build: compile('arena', a.code) }
-        const problems = checkArena(src)
-        if (problems.length === 0) return src
-        this.deps.log(`kept arena ${a.id} fails today's checks: ${problems[0]}`)
-      } catch (err) {
-        this.deps.log(`kept arena ${a.id} would not compile: ${(err as Error).message}`)
-      }
+      const src = this.keptArena(kept.splice(Math.floor(this.deps.random() * kept.length), 1)[0]!)
+      if (src) return src
     }
     return LECTURE_HALL
+  }
+
+  /** A kept arena to play, when it still compiles and passes today's checks (else logged, and null). */
+  private keptArena(a: ArenaDesign): ArenaSource | null {
+    try {
+      const src = { id: a.id, name: a.name, build: compile('arena', a.code) }
+      const problems = checkArena(src)
+      if (problems.length === 0) return src
+      this.deps.log(`kept arena ${a.id} fails today's checks: ${problems[0]}`)
+    } catch (err) {
+      this.deps.log(`kept arena ${a.id} would not compile: ${(err as Error).message}`)
+    }
+    return null
+  }
+
+  /**
+   * The last round's winner, a player, chooses where the next round is held (2026-11-14: "Voittajalle
+   * tarjolla jotain bonuksia"; a choice, not a strength, so a lead does not grow by itself): Opus's
+   * new arena or one of CHOICE_KEPT kept ones; left unchosen, the new one when it is built.
+   */
+  private offerChoice(winner: Player): void {
+    const kept = [...this.deps.store.arenas.values()].filter((a) => a.id !== this.lastArena && a.id !== this.nextArena?.id)
+    const offered: ArenaDesign[] = []
+    while (kept.length && offered.length < CHOICE_KEPT) offered.push(kept.splice(Math.floor(this.deps.random() * kept.length), 1)[0]!)
+    this.choice = offered.length ? { by: winner.id, options: [{ id: 'new', name: '' }, ...offered.map((a) => ({ id: a.id, name: a.name }))], chosen: null } : null
   }
 
   // ---------------------------------------------------------------------------- bots
@@ -1040,9 +1133,10 @@ export class Game {
       p.bot = new Bot(p.id, this.deps.random)
       p.ready = true
       p.name = botName(this.deps.random, new Set([...this.players.values()].map((q) => q.name)))
+      // Most bots keep their lab coats.
       const wear = (slot: Slot) => {
         const parts = [...this.wardrobe.values()].filter((w) => w.slot === slot)
-        return this.deps.random() < 0.7 && parts.length ? parts[Math.floor(this.deps.random() * parts.length)]!.id : undefined
+        return this.deps.random() < (slot === 'clothes' ? 0.2 : 0.7) && parts.length ? parts[Math.floor(this.deps.random() * parts.length)]!.id : undefined
       }
       const worn: Look['worn'] = {}
       for (const s of SLOTS) {
@@ -1077,8 +1171,15 @@ export class Game {
   }
 
   private startRound(): void {
-    const src = this.nextArena ?? this.fallbackArena()
-    this.nextArena = null
+    // The winner's choice of a kept arena leaves Opus's new one for the round after.
+    const chosen = this.choice?.chosen ?? null
+    this.choice = null
+    const kept = chosen && chosen !== 'new' ? this.deps.store.arenas.get(chosen) : undefined
+    let src = kept ? this.keptArena(kept) : null
+    if (!src) {
+      src = this.nextArena ?? this.fallbackArena()
+      this.nextArena = null
+    }
     this.waitSince = null
     this.sim?.free()
     this.jobs = []
@@ -1120,6 +1221,14 @@ export class Game {
     for (const p of this.players.values()) if (p.conn && !sim.doctors.has(p.id)) this.spectate(p)
     // The doctors who play: a page here without a name watches, and counts for neither.
     this.startedWith = playing.length
+    if (this.roomWins === null) this.matchBook = newBook()
+    this.roundBook = newBook()
+    this.claimTold.clear()
+    for (const p of playing) {
+      p.played = true
+      this.names.set(p.id, p.name)
+    }
+    this.statsDirty = true
     this.roomWins ??= winsForRoom(playing.length)
     this.round++
     this.winner = null
@@ -1156,9 +1265,58 @@ export class Game {
   private endRound(winner: string | null): void {
     const sim = this.sim!
     sim.live = false
+    this.committeeAt = Infinity
     this.winner = winner
-    if (winner) this.players.get(winner)!.wins++
+    const w = winner ? this.players.get(winner)! : null
+    if (w) w.wins++
+    if (w && !w.bot) this.deps.store.addRecord(w.key, w.name, { rounds: 1 })
+    if (w && !w.bot) this.offerChoice(w)
+    else this.choice = null
+    this.statsDirty = true
+    this.statsSent = -10
     this.setPhase('roundEnd', ROUND_END)
+  }
+
+  /** Whoever leads the match: the most rounds won, alone (none while nobody has won one, or two share the most). */
+  private leader(): string | null {
+    const ranked = [...this.players.values()].filter((p) => p.wins > 0).sort((a, b) => b.wins - a.wins)
+    return ranked[0] && ranked[0].wins !== ranked[1]?.wins ? ranked[0].id : null
+  }
+
+  /** What a step's events add to the round's and the match's tally, and to the record (a player's dismissals, of the leader too). */
+  private tally(sim: Sim, events: GameEvent[]): void {
+    const leader = this.leader()
+    const add = (m: Map<string, number>, k: string, n: number) => m.set(k, (m.get(k) ?? 0) + n)
+    const player = (id: string | null) => (id !== null && this.players.has(id) ? this.players.get(id)! : null)
+    for (const e of events) {
+      if (e.type === 'hit') {
+        const by = player(e.by)
+        for (const b of [this.roundBook, this.matchBook]) {
+          add(b.taken, e.victim, e.amount)
+          if (!by || by.id === e.victim) continue
+          add(b.dealt, by.id, e.amount)
+          if (!b.byThing.has(by.id)) b.byThing.set(by.id, new Map())
+          add(b.byThing.get(by.id)!, e.what, e.amount)
+        }
+        // Withdrawn with K: where doctors get stuck, by arena.
+        if (e.what === 'withdrawing') this.deps.store.append({ kind: 'withdraw', by: player(e.victim)?.name ?? e.victim, arena: sim.arena!.view.name })
+        this.statsDirty = true
+      } else if (e.type === 'out') {
+        const by = e.by !== e.victim ? player(e.by) : null
+        for (const b of [this.roundBook, this.matchBook]) {
+          const key = `${by?.id ?? ''}>${e.victim}`
+          const d = b.dismissals.get(key) ?? { by: by?.id ?? null, victim: e.victim, n: 0 }
+          d.n++
+          b.dismissals.set(key, d)
+        }
+        if (by && !by.bot && by.name) this.deps.store.addRecord(by.key, by.name, { dismissals: 1, leaders: e.victim === leader ? 1 : 0 })
+        this.statsDirty = true
+      }
+    }
+  }
+
+  private stats(): Stats {
+    return { round: tallyOf(this.roundBook), match: tallyOf(this.matchBook), names: Object.fromEntries(this.names) }
   }
 
   private setPhase(phase: Phase, secs: number): void {
@@ -1193,6 +1351,7 @@ export class Game {
           this.sim!.goLive()
           // The next request is a cooldown away for everyone, asked in the countdown or not.
           for (const p of this.players.values()) p.cooldownUntil = Math.max(p.cooldownUntil, now + REQUEST_COOLDOWN)
+          this.committeeAt = now + this.committeeGap(this.sim!)
           this.setPhase('round', 0)
         }
         break
@@ -1213,13 +1372,17 @@ export class Game {
           const champion = [...this.players.values()].filter((p) => p.wins >= this.matchWins()).sort((a, b) => b.wins - a.wins)[0]
           if (champion) {
             this.winner = champion.id
+            for (const p of this.players.values()) if (p.played && !p.bot && p.name) this.deps.store.addRecord(p.key, p.name, { matches: 1, doctorates: p === champion ? 1 : 0 })
             this.setPhase('matchEnd', MATCH_END)
           } else this.toDressing()
         }
         break
       case 'matchEnd':
         if (now >= this.phaseUntil) {
-          for (const p of this.players.values()) p.wins = 0
+          for (const p of this.players.values()) {
+            p.wins = 0
+            p.played = false
+          }
           this.had = []
           this.roomWins = null
           this.toDressing()
@@ -1242,7 +1405,11 @@ export class Game {
         sim.step()
         stepped = true
       }
-      if (this.phase === 'round') this.botCrates(sim, now)
+      if (this.phase === 'round') {
+        this.botCrates(sim, now)
+        this.committeeCrates(sim, now)
+        this.claims(sim)
+      }
       for (const job of this.jobs) {
         if (!job.filled && now >= job.deadline) {
           this.fill(job, this.fallbackKind(), { archive: true }, 'Opus took too long: a thing from the archive.')
@@ -1255,7 +1422,9 @@ export class Game {
     if (sim && stepped) {
       const models = sim.drainModels()
       if (Object.keys(models).length) this.broadcast({ type: 'models', models })
-      const snapText = JSON.stringify(sim.snapshot())
+      const snap = sim.snapshot()
+      this.tally(sim, snap.events)
+      const snapText = JSON.stringify(snap)
       for (const p of this.players.values()) {
         if (!p.conn) continue
         const me: Me = {
@@ -1267,6 +1436,11 @@ export class Game {
         }
         p.conn.send(`{"type":"snap","me":${JSON.stringify(me)},"snap":${snapText}}`)
       }
+    }
+    if (this.statsDirty && now - this.statsSent >= 1) {
+      this.statsDirty = false
+      this.statsSent = now
+      this.broadcast({ type: 'stats', stats: this.stats() })
     }
     // Sent when it changed, when its timer counts down, and every second in the dressing room (for the arena's building).
     const timer = this.countdown(now)
@@ -1285,6 +1459,31 @@ export class Game {
       if (!sim.doctors.get(p.id)?.alive || this.crateComing(sim, p)) continue
       const crate = sim.dropCrate(p.id, null)
       if (crate) sim.fillCrate(crate.id, this.fallbackKind(), { archive: true })
+    }
+  }
+
+  /** Seconds to the next committee crate: ARCHIVE_DROP shared by the doctors still in, give or take 30%. */
+  private committeeGap(sim: Sim): number {
+    return (ARCHIVE_DROP / Math.max(1, sim.alive().length)) * (0.7 + 0.6 * this.deps.random())
+  }
+
+  /** A committee crate comes in somewhere when its time has come, filled from the archive, unless enough of them wait unopened already. */
+  private committeeCrates(sim: Sim, now: number): void {
+    if (now < this.committeeAt) return
+    this.committeeAt = now + this.committeeGap(sim)
+    const waiting = [...sim.crates.values()].filter((c) => c.owner === null).length
+    if (waiting >= Math.max(1, Math.round(sim.alive().length * COMMITTEE_WAITING))) return
+    const crate = sim.dropCommitteeCrate()
+    if (crate) sim.fillCrate(crate.id, this.fallbackKind(), { archive: true })
+  }
+
+  /** A crate asked for and left unopened CRATE_CLAIM after it was ready: its asker is told it holds them back no longer. */
+  private claims(sim: Sim): void {
+    for (const c of sim.crates.values()) {
+      if (c.owner === null || c.readyAt === null || sim.time < c.readyAt + CRATE_CLAIM || this.claimTold.has(c.id)) continue
+      this.claimTold.add(c.id)
+      const p = this.players.get(c.owner)
+      if (p && !p.bot && c.id !== p.defence) this.note(p, `Your crate stood ${CRATE_CLAIM} s unopened: it is anyone's now, and you may ask again.`)
     }
   }
 
@@ -1313,7 +1512,13 @@ export class Game {
     const arena: ArenaStatus = this.nextArena ? { state: 'ready', name: this.nextArena.name } : this.arenaJob ? { state: 'building', since: Math.round(now - this.arenaJob.since), expect: this.arenaJob.expect, model: this.arenaJob.model } : { state: 'none' }
     const timer = this.countdown(now)
     const winner = this.winner ? (this.players.get(this.winner)?.name ?? null) : null
-    return { players, settings: this.settings, phase: this.phase, timer, round: this.round, arena, winner, wins: this.matchWins(), join: this.deps.join }
+    const choice = this.choice && { ...this.choice, options: this.choice.options.map((o) => (o.id === 'new' ? { id: 'new', name: this.nextArena ? this.nextArena.name : 'Opus’s new arena, still being built' } : o)) }
+    const here = new Set(this.present().map((p) => p.key))
+    const record: RecordRow[] = Object.entries(this.deps.store.record)
+      .map(([key, e]) => ({ ...e, here: here.has(key) }))
+      .sort((a, b) => b.doctorates - a.doctorates || b.rounds - a.rounds || b.dismissals - a.dismissals)
+      .slice(0, 12)
+    return { players, settings: this.settings, phase: this.phase, timer, round: this.round, arena, winner, wins: this.matchWins(), leader: this.leader(), choice, record, join: this.deps.join }
   }
 }
 
@@ -1335,6 +1540,7 @@ function cleanInput(v: unknown): Input {
     yaw: n(i.yaw, -1e6, 1e6),
     pitch: n(i.pitch, -1.5, 1.5),
     jump: i.jump === true,
+    withdraw: i.withdraw === true,
     hands: [i.hands?.[0] === true, i.hands?.[1] === true],
     presses: { use: pair(presses.use), other: pair(presses.other), throw: pair(presses.throw), pick: count(presses.pick), jump: count(presses.jump) },
   }

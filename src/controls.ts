@@ -5,7 +5,8 @@
  * that thing's other use. E picks up, Q throws what is in the left hand and F what is in the
  * right, Space jumps. Presses are counted, so a click between two of the server's steps still counts. The page's own keys
  * (T writes a request, R asks for a random thing, V taunts, Tab shows the scores) go to
- * callbacks. While a text box has the keys, the game ignores them.
+ * callbacks; K held withdraws to a spawn point (see WITHDRAW). While a text box has the keys,
+ * the game ignores them.
  */
 
 import { options } from './options'
@@ -133,7 +134,7 @@ export class Controls {
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch + ((k.has('ArrowUp') ? 1 : 0) - (k.has('ArrowDown') ? 1 : 0)) * 1.6 * dt))
     const x = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0)
     const z = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0)
-    return { move: [x, z], yaw: this.yaw, pitch: this.pitch, jump: k.has('Space'), hands: [...this.down], presses: this.presses }
+    return { move: [x, z], yaw: this.yaw, pitch: this.pitch, jump: k.has('Space'), hands: [...this.down], withdraw: k.has('KeyK'), presses: this.presses }
   }
 
   dispose(): void {

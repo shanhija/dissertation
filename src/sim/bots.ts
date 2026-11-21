@@ -205,7 +205,7 @@ export class Bot {
       }
     }
     // The spread goes on the aim when it is sent, so a use goes off with the error drawn for it.
-    return { move, yaw: yaw + (fight ? this.off[0] : 0), pitch: pitch + (fight ? this.off[1] : 0), jump: false, hands: down, presses: this.presses }
+    return { move, yaw: yaw + (fight ? this.off[0] : 0), pitch: pitch + (fight ? this.off[1] : 0), jump: false, hands: down, withdraw: false, presses: this.presses }
   }
 
   /** A point five metres off with a floor and a clear way to it, nearest the goal. */
