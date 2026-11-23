@@ -40,8 +40,11 @@ import {
   SpriteMaterial,
   Vector2,
   Vector3,
+  Float32BufferAttribute,
+  Uint16BufferAttribute,
   type BufferGeometry,
   type Material,
+  type Object3D,
 } from 'three'
 
 import { BODY, SLOT_FRAMES } from '../doctor'
@@ -80,6 +83,84 @@ import { ModelInstance, wornInstance } from './models'
  * outside it (2026-11-21: a dress Opus fitted to the coat's measures was cut through by the trunk,
  * a rounded square that bulges past a round shell at its corners).
  */
+/** Heights in the feet slot's frame (the ground under the ankle) of the ankle's joint and the knee's. */
+const KNEE_Y = ANKLE + JOINTS.shin
+/** Each joint's bend is blended over this much of the leg, from a little below the joint. */
+const BEND = { ankle: { below: 0.02, over: 0.07 }, knee: { below: 0.04, over: 0.08 } }
+/** Where something is in an ancestor's frame, as made (each object's own place and turn). */
+function placeIn(o: Object3D, ancestor: Object3D): Matrix4 {
+  const m = new Matrix4()
+  for (let x: Object3D | null = o; x !== ancestor; x = x.parent) {
+    if (!x) throw new Error('not inside the frame asked for')
+    x.updateMatrix()
+    m.premultiply(x.matrix)
+  }
+  return m
+}
+const legSkinned = new WeakMap<BufferGeometry, BufferGeometry>()
+
+/**
+ * What is worn on the feet bends with the leg (2026-11-23: "the boots don't bend with the calfs,
+ * so it looks weird. the boots should have a bend at the ankle"): its meshes are skinned to the
+ * foot, the shin and the thigh by how high each point is, blended across the ankle and the knee,
+ * so a boot's shaft goes with the calf and a thigh boot bends at the knee too. Its parts do not
+ * swing then. The bones hang on the leg's joints; they are given back to go when it is taken off.
+ */
+export function bendWithLeg(inst: Pick<ModelInstance, 'root' | 'meshes'>, feet: Group, leg: { thigh: Group; shin: Group; foot: Group }): { bones: Bone[]; skeleton: Skeleton } {
+  // The instance's frame in the ankle's, the knee's and the hip's as the leg stands at rest (the
+  // flesh of the shin and thigh widens with build: at rest, build 1).
+  const toFoot = placeIn(inst.root, leg.foot)
+  const toKnee = new Matrix4().makeTranslation(0, -JOINTS.shin, 0).multiply(toFoot)
+  const toHip = new Matrix4().makeTranslation(0, -JOINTS.thigh, 0).multiply(toKnee)
+  const bones = [leg.foot, leg.shin, leg.thigh].map((j) => {
+    const b = new Bone()
+    j.add(b)
+    return b
+  })
+  const skeleton = new Skeleton(bones, [toFoot, toKnee, toHip])
+  const footRest = placeIn(inst.root, feet)
+  for (const [i, mesh] of [...inst.meshes].entries()) {
+    const toRoot = placeIn(mesh, inst.root)
+    let g = legSkinned.get(mesh.geometry)
+    if (!g) {
+      g = mesh.geometry.clone().applyMatrix4(toRoot)
+      const pos = g.getAttribute('position')
+      const index = new Uint16Array(pos.count * 4)
+      const weight = new Float32Array(pos.count * 4)
+      const v = new Vector3()
+      for (let k = 0; k < pos.count; k++) {
+        // The point's height over the ground under the ankle.
+        const y = v.fromBufferAttribute(pos, k).applyMatrix4(footRest).y
+        const shin = smooth(ANKLE - BEND.ankle.below, ANKLE - BEND.ankle.below + BEND.ankle.over, y)
+        const thigh = smooth(KNEE_Y - BEND.knee.below, KNEE_Y - BEND.knee.below + BEND.knee.over, y)
+        index.set([0, 1, 2, 0], k * 4)
+        weight.set([1 - shin, shin * (1 - thigh), shin * thigh, 0], k * 4)
+      }
+      g.setAttribute('skinIndex', new Uint16BufferAttribute(index, 4))
+      g.setAttribute('skinWeight', new Float32BufferAttribute(weight, 4))
+      legSkinned.set(mesh.geometry, g)
+    }
+    const skinned = new SkinnedMesh(g, mesh.material)
+    skinned.castShadow = mesh.castShadow
+    skinned.receiveShadow = mesh.receiveShadow
+    // Wherever the leg takes it: no fixed bounds to cull it by.
+    skinned.frustumCulled = false
+    skinned.bind(skeleton, new Matrix4())
+    mesh.removeFromParent()
+    inst.root.add(skinned)
+    inst.meshes[i] = skinned
+  }
+  return { bones, skeleton }
+}
+
+/** A worn part taken off: its groups go, and the bones it bent with on the feet. */
+function takeOff(w: { inst: ModelInstance; bent: { bones: Bone[]; skeleton: Skeleton } | null }): void {
+  w.inst.dispose()
+  if (!w.bent) return
+  for (const b of w.bent.bones) b.removeFromParent()
+  w.bent.skeleton.dispose()
+}
+
 const UNDER = 0.86
 const slimmed = new Map<BufferGeometry, BufferGeometry>()
 /** A geometry UNDER as thick about its upright axis, its skin weights as they were (made once for every doctor). */
@@ -436,7 +517,10 @@ export class DoctorMesh {
   private readonly hipsMesh: Mesh
   private readonly mats: Record<'skin' | 'eyes' | 'coat' | 'shirt' | 'trousers' | 'shoes', MeshStandardMaterial>
   /** What is worn in each slot: one copy, or one on each foot, each swinging on its own. */
-  private readonly worn = new Map<Slot, { inst: ModelInstance; swing: Swing }[]>()
+  /** What is worn, by slot (two copies on the feet): swinging as it hangs, or on the feet, bent with the leg. */
+  private readonly worn = new Map<Slot, { inst: ModelInstance; swing: Swing | null; bent: { bones: Bone[]; skeleton: Skeleton } | null }[]>()
+  /** Each leg's joints, right then left, that what is worn on the feet bends with. */
+  private readonly legs: { thigh: Group; shin: Group; foot: Group }[] = []
   /** Where each slot's parts hang: the head, the trunk, or each ankle (the right foot mirrored). */
   private readonly wornGroups: Record<Slot, Group[]>
   /** The shoes, hidden while something is worn on the feet. */
@@ -571,7 +655,9 @@ export class DoctorMesh {
       this.clothes.trousers.push(kneeCap, leg)
       this.fitted.trousers.push(...[kneeCap, leg].map((mesh) => ({ mesh, full: mesh.geometry, at: mesh.position.clone() })))
       hip.add(leg, knee)
-      skinned.push({ mesh: leg, joints: [fleshOf(hip), shin], seen: new Sphere(new Vector3(), 1) })
+      const thigh = fleshOf(hip)
+      skinned.push({ mesh: leg, joints: [thigh, shin], seen: new Sphere(new Vector3(), 1) })
+      this.legs.push({ thigh, shin, foot: ankle })
       this.pelvis.add(hip)
       this.hips.push(hip)
       this.knees.push(knee)
@@ -748,15 +834,15 @@ export class DoctorMesh {
       const part = id ? wardrobe.get(id) : undefined
       const had = this.worn.get(s)
       if (had && had[0]!.inst.recipe === part?.recipe) continue
-      had?.forEach((w) => w.inst.dispose())
+      had?.forEach((w) => takeOff(w))
       this.worn.delete(s)
       if (part) {
         this.worn.set(
           s,
-          this.wornGroups[s].map((g) => {
+          this.wornGroups[s].map((g, i) => {
             const inst = wornInstance(part.recipe)
             g.add(inst.root)
-            return { inst, swing: new Swing(part.recipe, inst.parts, inst.root, FENCES[s]) }
+            return s === 'feet' ? { inst, swing: null, bent: bendWithLeg(inst, g, this.legs[i]!) } : { inst, swing: new Swing(part.recipe, inst.parts, inst.root, FENCES[s]), bent: null }
           }),
         )
       }
@@ -1229,7 +1315,7 @@ export class DoctorMesh {
       drape(this.skirtGeometry, SKIRT, now)
       this.draped = now
     }
-    for (const list of this.worn.values()) for (const w of list) w.swing.step(dt)
+    for (const list of this.worn.values()) for (const w of list) w.swing?.step(dt)
   }
 
   /**
@@ -1305,7 +1391,7 @@ export class DoctorMesh {
   }
 
   dispose(): void {
-    for (const w of this.worn.values()) w.forEach((x) => x.inst.dispose())
+    for (const w of this.worn.values()) w.forEach(takeOff)
     this.skirtGeometry.dispose()
     for (const s of this.skeletons) s.dispose()
     for (const m of Object.values(this.mats)) (m as Material).dispose()

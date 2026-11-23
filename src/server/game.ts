@@ -51,7 +51,7 @@ import { recipeOf, thingApi } from '../sim/api'
 import { buildArena, checkArena, type ArenaSource } from '../sim/arena'
 import { LECTURE_HALL } from '../sim/hall'
 import { Bot } from '../sim/bots'
-import { compile } from '../sim/sandbox'
+import { compile, physicsBroke } from '../sim/sandbox'
 import { DT, Sim, type Made, type ThingKind } from '../sim/sim'
 import { STARTERS, compileThing, trialThing, usesFor, type ThingDesign } from '../sim/things'
 import type { Designers } from './opus'
@@ -832,8 +832,15 @@ export class Game {
     const designers = this.deps.designers!
     const { ask, by, curse, genie, aside } = req
     const avoid = ask === null ? [...this.archive.values()].map((d) => d.name) : []
-    const had = ask === null ? [] : this.had.filter((h) => !h.drawn).map((h) => (h.ask === null ? h.name : `${h.name} (asked as ${JSON.stringify(h.ask)})`))
+    const hadNames = ask === null ? [] : this.had.filter((h) => !h.drawn)
+    const had = hadNames.map((h) => (h.ask === null ? h.name : `${h.name} (asked as ${JSON.stringify(h.ask)})`))
     const making = ask === null ? [] : [...this.asking]
+    // What the designer says the words asked for again must be one of those it was given (once it said only `">`).
+    const known = [...hadNames.map((h) => h.name), ...making]
+    const againOf = (said: string) => {
+      const k = said.replace(/\s*\(asked as .*\)$/i, '').trim().replace(/^["'“”]+|["'“”.]+$/g, '').toLowerCase()
+      return k ? (known.find((n) => n.toLowerCase() === k) ?? null) : null
+    }
     if (ask !== null) this.asking.push(ask)
     const t0 = this.now()
     try {
@@ -844,7 +851,8 @@ export class Game {
         const a = await designers.thing(thingMessage({ ...req, avoid, had, making, fix }), THING_TIMEOUT, until === null ? null : Math.max(0, Math.round((until - this.now()) * 1000)))
         const answer = a.data
         const id = this.deps.store.freeId('things', String(answer.name || 'thing'))
-        const again = ask !== null && answer.again.trim() ? answer.again.trim().slice(0, 60) : null
+        const said = ask === null ? '' : answer.again.trim()
+        const again = said ? againOf(said) : null
         const design: ThingDesign = {
           id,
           name: String(answer.name).slice(0, 60),
@@ -875,7 +883,7 @@ export class Game {
         } catch (err) {
           problems = [(err as Error).message]
         }
-        this.deps.store.append({ kind: 'thing', by, ask, curse, genie, aside, again, model: a.model, ms: design.ms, id, name: design.name, uses: design.uses, designed, perUse: perUse === null ? null : Math.round(perUse * 10) / 10, problems, ...(problems.length ? { look: design.look, code: design.code } : {}) })
+        this.deps.store.append({ kind: 'thing', by, ask, curse, genie, aside, again, ...(said && !again ? { againSaid: said.slice(0, 80) } : {}), model: a.model, ms: design.ms, id, name: design.name, uses: design.uses, designed, perUse: perUse === null ? null : Math.round(perUse * 10) / 10, problems, ...(problems.length ? { look: design.look, code: design.code } : {}) })
         if (problems.length === 0 && kind) {
           this.deps.store.saveThing(design)
           this.archive.set(id, design)
@@ -1262,6 +1270,19 @@ export class Game {
     d.collider.setEnabled(false)
   }
 
+  /**
+   * The physics broke under a step (physicsBroke, after made code used what Rapier had freed): the
+   * round ends with no winner rather than the server, and its world is dropped unfreed (freeing a
+   * broken world fails too). The next round builds a new one.
+   */
+  private physicsFailed(err: Error): void {
+    this.deps.log(`the physics broke in round ${this.round}, which ends: ${err.message}`)
+    this.deps.store.append({ kind: 'broke', round: this.round, arena: this.lastArena, error: err.message })
+    for (const p of this.humans()) this.note(p, 'The physics broke down: this round ends, and the next starts afresh.')
+    this.endRound(null)
+    this.sim = null
+  }
+
   private endRound(winner: string | null): void {
     const sim = this.sim!
     sim.live = false
@@ -1402,7 +1423,14 @@ export class Game {
           sim.setInput(p.id, input)
         }
         if (this.phase === 'countdown') for (const id of sim.doctors.keys()) sim.syncPresses(id)
-        sim.step()
+        try {
+          sim.step()
+        } catch (err) {
+          if (!physicsBroke(err)) throw err
+          this.physicsFailed(err as Error)
+          stepped = false
+          break
+        }
         stepped = true
       }
       if (this.phase === 'round') {

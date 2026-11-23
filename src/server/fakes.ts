@@ -32,6 +32,8 @@ export class FakeDesigners implements Designers {
   broken = 0
   /** Things fail to come at all. */
   failing = false
+  /** What the next thing's answer says its words asked for again, when a test sets it (else as the designer would). */
+  nextAgain: string | null = null
   /** The next look's answer, when a test sets one (else a tall hat and a red coat). */
   nextWear: WearAnswer | null = null
   /** What was asked, and for a thing how long its crate waited for it (null: none waited). */
@@ -70,7 +72,8 @@ export class FakeDesigners implements Designers {
     // As the designer would: words asked for already this match, in the very same words, name what they asked for again.
     const words = /asks for: (".*")/.exec(message)?.[1]
     const had = /^Had already in this match: (.*)\.$/m.exec(message)?.[1] ?? ''
-    const again = words ? (had.split('; ').find((h) => h.endsWith(`(asked as ${words})`))?.replace(/ \(asked as .*\)$/, '') ?? '') : ''
+    const again = this.nextAgain ?? (words ? (had.split('; ').find((h) => h.endsWith(`(asked as ${words})`))?.replace(/ \(asked as .*\)$/, '') ?? '') : '')
+    this.nextAgain = null
     return this.wait({ again, name: `Made Thing ${++this.n}`, description: s.description, click: s.click, shift: s.shift, budget: 10, uses: 10, form: 'A plain test form.', look: s.look, code: broken ? 'return { use() { me.nothing.at.all() } }' : s.code })
   }
   wear(message: string): Promise<Answered<WearAnswer>> {

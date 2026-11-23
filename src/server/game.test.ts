@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import path from 'node:path'
+
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { COUNTDOWN, DESIGN_LIMIT, REQUEST_COOLDOWN } from '../protocol'
@@ -135,6 +138,53 @@ describe('the game', () => {
     a.send({ type: 'request', text: 'another' })
     advance(0.1)
     expect(a.conn.last('snap')!.me.note).toMatch(/still coming|Wait/)
+  })
+
+  it('says a thing was had already only when the designer names one that was', async () => {
+    const designers = new FakeDesigners()
+    const { join, advance, store } = setup(designers)
+    await flush()
+    const a = join('Alice')
+    const b = join('Bob')
+    a.send({ type: 'ready', ready: true })
+    b.send({ type: 'ready', ready: true })
+    advance(COUNTDOWN + REQUEST_COOLDOWN + 0.5)
+    // Once the designer gave as again only `">` (a recorded match, 2026-11-23).
+    designers.nextAgain = '">'
+    a.send({ type: 'request', text: 'a leaf blower' })
+    await designers.settled()
+    advance(0.1)
+    expect(a.conn.last('snap')!.me.note).toMatch(/^Ready: Made Thing \d+\.$/)
+    expect(fs.readFileSync(path.join(store.dir, 'log.jsonl'), 'utf8')).toContain('"againSaid":"\\">"')
+  })
+
+  it('a step the physics breaks in ends the round, not the server, and the next round plays in a new world', async () => {
+    const { join, advance, game, logs } = setup()
+    await flush()
+    const a = join('Alice')
+    const b = join('Bob')
+    a.send({ type: 'ready', ready: true })
+    b.send({ type: 'ready', ready: true })
+    advance(COUNTDOWN + 1)
+    expect(game.phase).toBe('round')
+    const broken = game.sim!
+    broken.step = () => {
+      throw new WebAssembly.RuntimeError('unreachable')
+    }
+    advance(0.1)
+    expect(game.phase).toBe('roundEnd')
+    expect(game.sim).toBeNull()
+    expect(a.conn.last('note')!.text).toMatch(/physics broke/)
+    expect(logs.some((l) => l.includes('the physics broke'))).toBe(true)
+    advance(6)
+    expect(game.phase).toBe('dressing')
+    a.send({ type: 'ready', ready: true })
+    b.send({ type: 'ready', ready: true })
+    advance(COUNTDOWN + 1)
+    expect(game.phase).toBe('round')
+    expect(game.sim).not.toBe(broken)
+    advance(1)
+    expect(a.conn.last('snap')!.snap.doctors).toHaveLength(2)
   })
 
   it('a design that takes too long leaves the crate to the archive, and is kept when it comes', async () => {

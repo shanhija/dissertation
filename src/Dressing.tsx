@@ -365,7 +365,7 @@ export function Dressing({ net, lobby }: { net: Net; lobby: Lobby }) {
               <div className="choices">
                 {lobby.choice.options.map((o) => (
                   <button key={o.id} className={`small ${lobby.choice!.chosen === o.id ? 'on' : ''}`} disabled={lobby.choice!.by !== net.you} onClick={() => net.send({ type: 'chooseArena', id: o.id })}>
-                    {o.name}
+                    {o.id === 'new' ? `New: ${o.name}` : `Kept: ${o.name}`}
                   </button>
                 ))}
               </div>

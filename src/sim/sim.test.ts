@@ -193,6 +193,40 @@ describe('things', () => {
   })
 })
 
+describe('what made code removes', () => {
+  it('a body removed by another body\'s tick in the same step is not touched again', () => {
+    const sim = hall()
+    const [a] = pair(sim)
+    const remover: ThingDesign = {
+      ...STARTERS[0]!,
+      id: 'remover',
+      code: `let second = null
+let done = false
+return { tick() {
+  if (done) return
+  done = true
+  w.spawn({ shape: 'ball', size: 0.2, at: [0, 2, 2], gravity: 0, life: 10, tick() { if (second) second.remove() } })
+  second = w.spawn({ shape: 'ball', size: 0.2, at: [0, 2, 3], gravity: 0, life: 10 })
+} }`,
+    }
+    sim.newThing(compileThing(remover), a, a.pos)
+    steps(sim, 5)
+    expect(sim.bodies.size).toBe(1)
+    expect(sim.errors).toEqual([])
+  })
+
+  it('a trap in the physics under made code is not swallowed as its mistake', () => {
+    expect(() =>
+      call(() => {
+        throw new WebAssembly.RuntimeError('unreachable')
+      }, null),
+    ).toThrow(WebAssembly.RuntimeError)
+    expect(call(() => {
+      throw new TypeError('a made mistake')
+    }, null)).toMatchObject({ ok: false })
+  })
+})
+
 describe('two hands', () => {
   const marker = (id: string): ThingDesign => ({ ...STARTERS[0]!, id, code: `return { use() { w.text([0, 0, 0], '${id} use') }, hold() { w.text([0, 0, 0], '${id} hold') }, alt() { w.text([0, 0, 0], '${id} other') } }` })
   const said = (sim: Sim, n: number) => {

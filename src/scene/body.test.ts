@@ -1,12 +1,12 @@
-import { Group, Vector3 } from 'three'
+import { BoxGeometry, Group, Mesh, MeshBasicMaterial, Vector3, type SkinnedMesh } from 'three'
 import { describe, expect, it } from 'vitest'
 
 import { BODY } from '../doctor'
 import { buildArena } from '../sim/arena'
 import { LECTURE_HALL } from '../sim/hall'
 import { Sim, initPhysics } from '../sim/sim'
-import { applyRag, reach, type DoctorMesh } from './doctor'
-import { JOINTS } from './figure'
+import { applyRag, bendWithLeg, reach, type DoctorMesh } from './doctor'
+import { ANKLE, JOINTS } from './figure'
 
 /** The end of a two-part limb posed as reach says, from a shoulder at s. */
 function endOf(s: Vector3, pose: ReturnType<typeof reach>, a: number, b: number): { elbow: Vector3; end: Vector3 } {
@@ -117,5 +117,49 @@ describe('the ragdoll as drawn', () => {
       expect(at(m.knees[i]!).distanceTo(part(8 + 2 * i))).toBeLessThan(0.02)
     }
     sim.free()
+  })
+})
+
+describe('what is worn on the feet', () => {
+  it('bends with the leg: its foot goes with the foot, its shaft with the shin', () => {
+    // A leg as the drawn doctor's: hip, knee, ankle, and the feet slot's ground under the ankle.
+    const hip = new Group()
+    hip.position.set(0.1, BODY.hips.y, 0)
+    const thigh = new Group()
+    const knee = new Group()
+    knee.position.y = -JOINTS.thigh
+    const shin = new Group()
+    const ankle = new Group()
+    ankle.position.y = -JOINTS.shin
+    const feet = new Group()
+    feet.position.y = -ANKLE
+    hip.add(thigh, knee)
+    knee.add(shin, ankle)
+    ankle.add(feet)
+    // A boot: from the ground to 0.35 m up the calf.
+    const root = new Group()
+    feet.add(root)
+    const boot = new Mesh(new BoxGeometry(0.12, 0.35, 0.25).translate(0, 0.175, 0.04), new MeshBasicMaterial())
+    root.add(boot)
+    bendWithLeg({ root, meshes: [boot] }, feet, { thigh, shin, foot: ankle })
+    const skinned = root.children[0] as SkinnedMesh
+    const pos = skinned.geometry.getAttribute('position')
+    const ys = Array.from({ length: pos.count }, (_, i) => pos.getY(i))
+    const sole = ys.indexOf(Math.min(...ys))
+    const top = ys.indexOf(Math.max(...ys))
+    const at = (i: number) => {
+      hip.updateMatrixWorld(true)
+      return skinned.localToWorld(skinned.applyBoneTransform(i, new Vector3().fromBufferAttribute(pos, i)))
+    }
+    const rest = [at(sole), at(top)]
+    expect(rest[0]!.y).toBeCloseTo(0, 3)
+    // The foot points down: the sole turns round the ankle, the shaft stays with the shin.
+    ankle.rotation.x = 0.6
+    expect(at(top).distanceTo(rest[1]!)).toBeLessThan(1e-6)
+    expect(at(sole).distanceTo(rest[0]!)).toBeGreaterThan(0.02)
+    // The knee bends: the shaft goes with the shin.
+    ankle.rotation.x = 0
+    knee.rotation.x = -0.8
+    expect(at(top).distanceTo(rest[1]!)).toBeGreaterThan(0.1)
   })
 })

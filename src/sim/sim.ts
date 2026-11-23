@@ -2002,10 +2002,14 @@ export class Sim {
     for (const t of [...this.things.values()]) {
       if (t.dead) continue
       this.callThing(t, 'tick', dt)
+      // Its tick may have removed it (its body is freed then).
+      if (t.dead) continue
       if (t.body && t.body.translation().y < (arena?.floor ?? -30) - 20) this.removeThing(t)
       else if (t.spent && this.time - t.spent.t > SPENT_MIN && (this.time - t.spent.t > SPENT_MAX || !this.playing(t))) this.removeThing(t)
     }
     for (const b of [...this.bodies.values()]) {
+      // An earlier body's tick may have removed this one (its rigid body is freed then).
+      if (!this.bodies.has(b.id)) continue
       if (this.time > b.until || b.rb.translation().y < (arena?.floor ?? -30) - 20) {
         this.removeBody(b)
         continue

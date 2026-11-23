@@ -81,12 +81,23 @@ export function compile(kind: CodeKind, code: string): (...args: never[]) => unk
   return compileGuarded(guarded(kind, code), kind)
 }
 
+/**
+ * Whether an error is Rapier's world breaking, not the made code's mistake: a trap in its
+ * WebAssembly (a freed body used, say), after which the objects it had borrowed stay borrowed and
+ * every later call on them fails ("recursive use of an object"). Made code must not swallow it,
+ * or the round goes on in a broken world and the server falls over later, somewhere else
+ * (2026-11-23: a recorded match crashed so in setNextKinematicTranslation).
+ */
+export function physicsBroke(err: unknown): boolean {
+  return err instanceof WebAssembly.RuntimeError || (err instanceof Error && err.message.startsWith('recursive use of an object'))
+}
+
 export type Called<T> = { ok: true; value: T } | { ok: false; error: string }
 
 /**
  * One call into made code with a fresh budget: GUARD_MS of its own, even when made from inside
  * another (a thing's `dropped` when another thing's blow knocks its holder down); inside a
- * `callFor`, on that call's clock. Never throws.
+ * `callFor`, on that call's clock. Throws only when the physics broke under it (PhysicsBroke).
  */
 export function call<T>(fn: unknown, self: unknown, ...args: unknown[]): Called<T> {
   return run(covers ? null : GUARD_MS, false, fn, self, args)
@@ -95,7 +106,7 @@ export function call<T>(fn: unknown, self: unknown, ...args: unknown[]): Called<
 /**
  * One call into made code that may take `ms` real milliseconds, everything it calls included:
  * what an arena builds as it is built counts on the build's clock, so the build's time covers it
- * all. Never throws.
+ * all. Throws only when the physics broke under it (PhysicsBroke).
  */
 export function callFor<T>(ms: number, fn: unknown, self: unknown, ...args: unknown[]): Called<T> {
   return run(ms, true, fn, self, args)
@@ -118,6 +129,7 @@ function run<T>(ms: number | null, covering: boolean, fn: unknown, self: unknown
   try {
     return { ok: true, value: (fn as (...a: unknown[]) => T).apply(self, args) }
   } catch (err) {
+    if (physicsBroke(err)) throw err
     return { ok: false, error: describeError(err) }
   } finally {
     spent = outer.spent

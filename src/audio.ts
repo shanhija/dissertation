@@ -292,14 +292,39 @@ export function ducker(): (distance: number) => void {
 }
 
 /**
+ * How many sounds may start, voices aside (2026-11-23: a recorded fight started 100 to 180 a
+ * second, each with its own panner, and the page's audio thread fell behind real time, a core at
+ * 100% and the sound silent for up to 30 s): at most `rate` a second, `burst` at once, and while
+ * fewer than `near.left` are left, only those within `near.within` metres.
+ */
+const BUDGET = { rate: 60, burst: 16, near: { left: 6, within: 20 } }
+/** Head-related panning (each ear its own, behind told from in front) costs most: for sounds within this many metres, plain stereo beyond. */
+const HRTF_WITHIN = 15
+let tokens = BUDGET.burst
+let tokensAt = 0
+
+/** Whether a sound `distance` metres away may start now (and it is counted if so). */
+function allowed(distance: number): boolean {
+  const now = performance.now() / 1000
+  tokens = Math.min(BUDGET.burst, tokens + (now - tokensAt) * BUDGET.rate)
+  tokensAt = now
+  if (tokens < 1 || (tokens < BUDGET.near.left && distance > BUDGET.near.within)) return false
+  tokens -= 1
+  return true
+}
+
+/**
  * The way a sound goes from where it is to the ear: its loudness, the air's and any wall's
  * dulling, its place in 3D, and a share of it into the room, as its kind carries. Null when it is
- * too far to hear. Moved, it looks for a wall in the way again every WALL_CHECK seconds.
+ * too far to hear, or too many sounds are starting (BUDGET). Moved, it looks for a wall in the way
+ * again every WALL_CHECK seconds.
  */
 export function route(p: Placed, kind: Kind): Route | null {
   const c = audio()
   const out = mainOut()
   if (!c || !out || !wet || !others) return null
+  const distance = p.at ? Math.hypot(p.at[0] - ear.at[0], p.at[1] - ear.at[1], p.at[2] - ear.at[2]) : 0
+  if (distance > 110 || (kind !== 'voice' && !allowed(distance))) return null
   const carry = CARRY[kind]
   const [dry, echo] = kind === 'voice' ? [out, wet] : [others.dry, others.wet]
   const gain = c.createGain()
@@ -311,8 +336,7 @@ export function route(p: Placed, kind: Kind): Route | null {
     gain.connect(send).connect(echo)
     return { into: gain, moveTo: () => {} }
   }
-  const d = Math.hypot(p.at[0] - ear.at[0], p.at[1] - ear.at[1], p.at[2] - ear.at[2])
-  if (d > 110) return null
+  const d = distance
   const walled = (at: Vec3, d: number) => d > 1.5 && occluded(at, ear.at)
   let wall = walled(p.at, d)
   const air = c.createBiquadFilter()
@@ -320,7 +344,7 @@ export function route(p: Placed, kind: Kind): Route | null {
   air.Q.value = 0.5
   const through = c.createGain()
   through.gain.value = wall ? carry.wallGain : 1
-  const pan = new PannerNode(c, { panningModel: 'HRTF', distanceModel: 'inverse', refDistance: carry.refDistance, maxDistance: 110, rolloffFactor: carry.rolloff, positionX: p.at[0], positionY: p.at[1], positionZ: p.at[2] })
+  const pan = new PannerNode(c, { panningModel: kind === 'voice' || d <= HRTF_WITHIN ? 'HRTF' : 'equalpower', distanceModel: 'inverse', refDistance: carry.refDistance, maxDistance: 110, rolloffFactor: carry.rolloff, positionX: p.at[0], positionY: p.at[1], positionZ: p.at[2] })
   gain.connect(through).connect(air).connect(pan).connect(dry)
   // Farther off, more of what is heard is the room's echo.
   const send = c.createGain()
